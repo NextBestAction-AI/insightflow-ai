@@ -9,9 +9,14 @@ by the AI team and NOT part of the backend.
 """
 
 from __future__ import annotations
-from datetime import datetime
-from typing import Optional, Any
-from pydantic import BaseModel, Field
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any, ClassVar, Literal, Optional
+
+from pydantic import BaseModel, Field, field_validator
+
+from backend.orchestrator.workflow_status import AgentStatus, WorkflowStatus
 
 
 class RecommendationWorkflowState(BaseModel):
@@ -47,6 +52,252 @@ class WorkflowMetrics(BaseModel):
     rejected_recommendations: int = Field(default=0, description="Rejected count")
     avg_approval_time_hours: Optional[float] = Field(None, description="Average approval time")
     approval_rate: float = Field(default=0.0, description="Approval percentage")
+
+
+class CustomerState(BaseModel):
+    """
+    Customer profile information passed into the workflow.
+
+    This section is populated once at workflow creation (typically from
+    CRM data or the inbound API request) and treated as effectively
+    immutable by downstream agents.
+
+    Attributes
+    ----------
+    customer_id : str | None
+        Primary key from the CRM system.
+    customer_name : str | None
+        Display name of the customer contact.
+    company : str | None
+        Legal entity / organisation name.
+    industry : str | None
+        Industry vertical (e.g. ``"Financial Services"``).
+    account_type : str | None
+        Account tier (e.g. ``"Enterprise"``, ``"SMB"``).
+    region : str | None
+        Geographic region (e.g. ``"EMEA"``, ``"APAC"``).
+    segment : str | None
+        Commercial segment or go-to-market motion.
+    annual_revenue_usd : float | None
+        Customer's reported annual revenue in USD.
+    employee_count : int | None
+        Approximate headcount.
+    extra : dict[str, Any]
+        Extensible bag for future CRM attributes without breaking the model.
+    """
+
+    customer_id: str | None = Field(
+        default=None,
+        description="Primary key from the CRM system.",
+    )
+    customer_name: str | None = Field(
+        default=None,
+        description="Display name of the customer contact.",
+    )
+    company: str | None = Field(
+        default=None,
+        description="Legal entity / organisation name.",
+    )
+    industry: str | None = Field(
+        default=None,
+        description="Industry vertical (e.g. 'Financial Services').",
+    )
+    account_type: str | None = Field(
+        default=None,
+        description="Account tier (e.g. 'Enterprise', 'SMB', 'Startup').",
+    )
+    region: str | None = Field(
+        default=None,
+        description="Geographic region (e.g. 'EMEA', 'APAC', 'AMER').",
+    )
+    segment: str | None = Field(
+        default=None,
+        description="Commercial segment or go-to-market motion.",
+    )
+    annual_revenue_usd: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Customer's reported annual revenue in USD.",
+    )
+    employee_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="Approximate employee headcount.",
+    )
+    extra: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Extensible bag for future CRM attributes.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# InputState
+# ---------------------------------------------------------------------------
+
+
+class InputState(BaseModel):
+    """
+    Raw inputs received by the platform for this workflow run.
+
+    Populated at workflow creation; treated as read-only by all agents.
+    Agents work with the processed outputs in ``ContextState`` and
+    ``AnalysisState`` rather than re-parsing raw inputs.
+
+    Attributes
+    ----------
+    user_query : str | None
+        Natural-language query or instruction from the end user.
+    transcript : str | None
+        Full call / meeting transcript text.
+    emails : list[str]
+        Raw email bodies submitted for analysis.
+    meeting_notes : str | None
+        Unstructured notes from a meeting or review session.
+    attachments : list[dict[str, Any]]
+        File references or inline attachment payloads.
+    source_channel : str | None
+        Originating channel (e.g. ``"api"``, ``"slack"``, ``"email"``).
+    language : str
+        BCP-47 language tag of the primary input text (default: ``"en"``).
+    """
+
+    user_query: str | None = Field(
+        default=None,
+        description="Natural-language query or instruction from the end user.",
+    )
+    transcript: str | None = Field(
+        default=None,
+        description="Full call / meeting transcript text.",
+    )
+    emails: list[str] = Field(
+        default_factory=list,
+        description="Raw email bodies submitted for analysis.",
+    )
+    meeting_notes: str | None = Field(
+        default=None,
+        description="Unstructured notes from a meeting or review session.",
+    )
+    attachments: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="File references or inline attachment payloads.",
+    )
+    source_channel: str | None = Field(
+        default=None,
+        description="Originating channel (e.g. 'api', 'slack', 'email').",
+    )
+    language: str = Field(
+        default="en",
+        min_length=2,
+        description="BCP-47 language tag of the primary input text.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# ContextState
+# ---------------------------------------------------------------------------
+
+
+class ContextState(BaseModel):
+    """
+    Enterprise context retrieved from external systems.
+
+    Populated by the ``KnowledgeAgent`` and ``CRMAgent``.  Downstream
+    analytical agents read from this section rather than calling external
+    systems directly.
+
+    Attributes
+    ----------
+    crm_context : dict[str, Any]
+        Structured data fetched from the CRM (opportunities, contacts, …).
+    knowledge_context : list[dict[str, Any]]
+        Relevant knowledge base articles, FAQs, or product documentation.
+    historical_interactions : list[dict[str, Any]]
+        Previous interaction records for this customer.
+    usage_metrics : dict[str, Any]
+        Product usage telemetry (DAU, feature adoption, health scores, …).
+    competitive_intelligence : list[dict[str, Any]]
+        Competitive intel retrieved from internal battlecards or KB.
+    retrieval_sources : list[str]
+        Ordered list of system/document names that contributed context.
+    context_retrieved_at : datetime | None
+        UTC timestamp when context retrieval completed.
+    """
+
+    crm_context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured data fetched from the CRM.",
+    )
+    knowledge_context: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Relevant knowledge base articles or product documentation.",
+    )
+    historical_interactions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Previous interaction records for this customer.",
+    )
+    usage_metrics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Product usage telemetry (DAU, feature adoption, health scores).",
+    )
+    competitive_intelligence: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Competitive intel from internal battlecards or KB.",
+    )
+    retrieval_sources: list[str] = Field(
+        default_factory=list,
+        description="Ordered list of system/document names that contributed context.",
+    )
+    context_retrieved_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when context retrieval completed.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# AnalysisState
+# ---------------------------------------------------------------------------
+
+
+class AnalysisState(BaseModel):
+    """
+    Outputs generated by the analytical agents.
+
+    Written by ``InteractionAgent``, ``KnowledgeAgent``, and ``RiskAgent``.
+    ``ReasoningAgent`` reads this section to synthesise business insights.
+
+    Attributes
+    ----------
+    interaction_analysis : dict[str, Any]
+        Structured analysis of the customer interaction (sentiment,
+        topics, action items, …).
+    health_assessment : dict[str, Any]
+        Customer health score breakdown (usage, engagement, renewal risk).
+    risk_assessment : dict[str, Any]
+        Risk assessment containing overall level and identified risks.
+    business_reasoning : dict[str, Any]
+        Higher-order synthesis produced by the ReasoningAgent.
+    sentiment_score : float | None
+        Aggregate sentiment score in [-1.0, 1.0]; None if not computed.
+    key_topics : list[str]
+        Salient topics / themes extracted from the interaction.
+    action_items : list[dict[str, Any]]
+        Explicit action items extracted from the interaction.
+    recommendations : dict[str, Any]
+        Recommendation plan containing recommendations, overall priority, confidence, and summary.
+    """
+
+    interaction_analysis: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured analysis of the customer interaction.",
+    )
+    health_assessment: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Customer health score breakdown.",
+    )
+    risk_assessment: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Risk assessment containing overall level and identified risks.",
+    )
     business_reasoning: dict[str, Any] = Field(
         default_factory=dict,
         description="Higher-order synthesis produced by the ReasoningAgent.",
@@ -65,6 +316,10 @@ class WorkflowMetrics(BaseModel):
         default_factory=list,
         description="Explicit action items extracted from the interaction.",
     )
+    recommendations: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Recommendation plan containing recommendations, overall priority, confidence, and summary.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -81,39 +336,17 @@ class RecommendationState(BaseModel):
 
     Attributes
     ----------
-    recommendations : list[dict[str, Any]]
-        Ordered list of recommended actions (highest-confidence first).
     explanations : list[str]
         Natural-language explanations for each recommendation.
-    confidence_scores : list[float]
-        Per-recommendation confidence scores in [0.0, 1.0].  Index-aligned
-        with ``recommendations``.
-    evidence : list[dict[str, Any]]
-        Supporting evidence items cited for each recommendation.
     next_best_actions : list[str]
         Concise, prioritised next-best-actions for the sales / CS rep.
     generated_at : datetime | None
         UTC timestamp when recommendations were finalised.
     """
 
-    recommendations: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Ordered list of recommended actions (highest-confidence first).",
-    )
     explanations: list[str] = Field(
         default_factory=list,
         description="Natural-language explanations for each recommendation.",
-    )
-    confidence_scores: list[float] = Field(
-        default_factory=list,
-        description=(
-            "Per-recommendation confidence scores [0.0, 1.0], "
-            "index-aligned with 'recommendations'."
-        ),
-    )
-    evidence: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Supporting evidence items cited for each recommendation.",
     )
     next_best_actions: list[str] = Field(
         default_factory=list,
