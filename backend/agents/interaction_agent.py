@@ -224,9 +224,15 @@ class InteractionAnalysis(BaseModel):
 
     Attributes
     ----------
+    customer : str
+        Customer's name or identifier as determined from the interaction.
+    participants : list[str]
+        All individuals who participated (customer contacts, reps, etc.).
     sentiment : str
         Overall sentiment: ``"positive"``, ``"neutral"``, ``"negative"``,
         or ``"mixed"``.
+    sentiment_score : float | None
+        Numeric sentiment score in [-1.0, 1.0]; ``None`` if not computable.
     urgency : str
         Urgency level: ``"low"``, ``"medium"``, ``"high"``, or ``"critical"``.
     issues : list[IssueRecord]
@@ -235,16 +241,42 @@ class InteractionAnalysis(BaseModel):
         Named entities extracted from the corpus.
     action_items : list[ActionItem]
         Explicit action items with ownership and due dates.
+    commitments : list[CommitmentRecord]
+        Promises made during the interaction.
+    key_topics : list[str]
+        Salient themes and topics discussed.
     summary : str
         Concise narrative summary of what happened in the interaction.
+    interaction_count : int
+        Number of distinct interaction records that were analysed.
+    sources_analysed : list[str]
+        Interaction source types that contributed to the analysis.
+    analysed_at : datetime
+        UTC timestamp when the analysis was produced.
     confidence : float | None
         Self-reported model confidence in [0.0, 1.0]; ``None`` if absent.
     """
+
+    # ── Identity ───────────────────────────────────────────────────────────
+    customer: str = Field(
+        default="unknown",
+        description="Customer name or identifier from the interaction.",
+    )
+    participants: list[str] = Field(
+        default_factory=list,
+        description="All individuals who participated in the interaction.",
+    )
 
     # ── Sentiment & Urgency ────────────────────────────────────────────────
     sentiment: str = Field(
         default="neutral",
         description="Overall sentiment: 'positive', 'neutral', 'negative', or 'mixed'.",
+    )
+    sentiment_score: float | None = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="Numeric sentiment in [-1.0, 1.0].",
     )
     urgency: str = Field(
         default="medium",
@@ -264,6 +296,14 @@ class InteractionAnalysis(BaseModel):
         default_factory=list,
         description="Explicit action items with ownership and due dates.",
     )
+    commitments: list[CommitmentRecord] = Field(
+        default_factory=list,
+        description="Commitments and promises made during the interaction.",
+    )
+    key_topics: list[str] = Field(
+        default_factory=list,
+        description="Salient themes and topics discussed.",
+    )
 
     # ── Narrative ─────────────────────────────────────────────────────────
     summary: str = Field(
@@ -272,6 +312,19 @@ class InteractionAnalysis(BaseModel):
     )
 
     # ── Provenance ─────────────────────────────────────────────────────────
+    interaction_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of distinct interaction records analysed.",
+    )
+    sources_analysed: list[str] = Field(
+        default_factory=list,
+        description="Interaction source types that contributed to the analysis.",
+    )
+    analysed_at: datetime = Field(
+        default_factory=lambda: datetime.now(tz=timezone.utc),
+        description="UTC timestamp when the analysis was produced.",
+    )
     confidence: float | None = Field(
         default=None,
         ge=0.0,
@@ -292,6 +345,13 @@ class InteractionAnalysis(BaseModel):
     def _normalise_urgency(cls, v: Any) -> str:
         normalised = str(v).lower().strip()
         return normalised if normalised in {"low", "medium", "high", "critical"} else "medium"
+
+    @model_validator(mode="after")
+    def _clamp_sentiment_score(self) -> "InteractionAnalysis":
+        """Ensure sentiment_score is within [-1.0, 1.0] after all fields are set."""
+        if self.sentiment_score is not None:
+            self.sentiment_score = max(-1.0, min(1.0, self.sentiment_score))
+        return self
 
 
 # =============================================================================
@@ -604,7 +664,7 @@ You are an expert Customer Success Intelligence analyst embedded in an \
 enterprise Agentic AI platform.
 
 Your task is to analyse the customer interactions provided below and \
-return a structured intelligence report in **strict JSON** format.
+return a comprehensive, structured intelligence report in **strict JSON** format.
 
 ## Customer Context
 - Customer: {customer_name}
@@ -620,11 +680,14 @@ from {sources_list}:
 {interactions_text}
 
 ## Required Output
-Return ONLY a single, valid JSON object with exactly the following fields. \
+Return ONLY a single, valid JSON object with the following fields. \
 Do not add any prose, markdown fences, or explanation outside the JSON object.
 
 {{
+  "customer": "<customer name or company if person unknown>",
+  "participants": ["<name or role>", ...],
   "sentiment": "<positive | neutral | negative | mixed>",
+  "sentiment_score": <float in [-1.0, 1.0] or null>,
   "urgency": "<low | medium | high | critical>",
   "issues": [
     {{
@@ -651,6 +714,14 @@ feature | competitor | other>",
       "priority": "<low | medium | high>"
     }}
   ],
+  "commitments": [
+    {{
+      "description": "<commitment description>",
+      "made_by": "<customer | sales_rep | support_engineer | name>",
+      "due_date": "<free-text date string or null>"
+    }}
+  ],
+  "key_topics": ["<topic>", ...],
   "summary": "<concise 3–5 sentence narrative of what happened>",
   "confidence": <float in [0.0, 1.0]>
 }}
@@ -660,9 +731,10 @@ feature | competitor | other>",
 2. NEVER infer unsupported facts. Every extracted detail must be directly grounded in the provided interaction text.
 3. Every issue must be directly supported by the interaction text.
 4. Every action item must originate from the interaction.
-5. Unknown information must be returned as null or an empty list (e.g. if due_date is unknown, use null; if issues/action_items are empty, use []).
-6. Keep entity names exactly as they appear in the text; do not normalise.
-7. Output STRICT JSON only. Do not include markdown code blocks (e.g. ```json ... ```) or any surrounding conversational filler text.
+5. Every commitment must exist in the interaction.
+6. Unknown information must be returned as null or an empty list (e.g. if sentiment_score or due_date is unknown, use null; if issues/action_items are empty, use []).
+7. Keep entity names exactly as they appear in the text; do not normalise.
+8. Output STRICT JSON only. Do not include markdown code blocks (e.g. ```json ... ```) or any surrounding conversational filler text.
 """
 
 _SYSTEM_PROMPT: str = (
@@ -754,6 +826,9 @@ class InteractionAgent(BaseAgent):
 
     produced_outputs: ClassVar[list[str]] = [
         "analysis.interaction_analysis",
+        "analysis.sentiment_score",
+        "analysis.key_topics",
+        "analysis.action_items",
     ]
 
     supported_execution_modes: ClassVar[list[str]] = [
@@ -1052,7 +1127,9 @@ class InteractionAgent(BaseAgent):
             )
             # Write a stub so state is not left empty, enabling partial workflows.
             stub = InteractionAnalysis(
+                customer=state.customer.customer_name or "unknown",
                 summary="[InteractionAgent failed to parse LLM response — partial data only]",
+                sources_analysed=["recovery_stub"],
             )
             try:
                 self._write_state(state, stub)
@@ -1210,6 +1287,14 @@ class InteractionAgent(BaseAgent):
         )
         analysis = self._parser.parse_json_as(raw_text, InteractionAnalysis)
 
+        # Enrich with provenance fields that the LLM does not produce.
+        enriched_sources = list(dict.fromkeys(r.source for r in interactions))
+        analysis = analysis.model_copy(update={
+            "interaction_count": len(interactions),
+            "sources_analysed": enriched_sources,
+            "analysed_at": datetime.now(tz=timezone.utc),
+        })
+
         self._logger.debug(
             "[InteractionAgent] Parsing complete — sentiment=%s urgency=%s",
             analysis.sentiment,
@@ -1242,6 +1327,15 @@ class InteractionAgent(BaseAgent):
                 "[InteractionAgent] Empty summary from LLM — fallback applied."
             )
 
+        # Invariant 2: interaction_count must equal the actual corpus size
+        expected_count = len(interactions)
+        if analysis.interaction_count != expected_count:
+            self._add_warning(
+                f"LLM reported interaction_count={analysis.interaction_count} "
+                f"but actual corpus size is {expected_count}. Corrected."
+            )
+            updates["interaction_count"] = expected_count
+
         if updates:
             analysis = analysis.model_copy(update=updates)
 
@@ -1258,7 +1352,23 @@ class InteractionAgent(BaseAgent):
         full_payload = analysis.model_dump(mode="json")
         state.analysis.interaction_analysis = full_payload
 
+        # Promote convenience fields to top-level AnalysisState
+        if analysis.sentiment_score is not None:
+            state.analysis.sentiment_score = analysis.sentiment_score
+
+        if analysis.key_topics:
+            state.analysis.key_topics = list(analysis.key_topics)
+
+        if analysis.action_items:
+            state.analysis.action_items = [
+                item.model_dump(mode="json") for item in analysis.action_items
+            ]
+
         self._logger.debug(
-            "[InteractionAgent] State written — interaction_analysis size=%d keys.",
+            "[InteractionAgent] State written — interaction_analysis size=%d keys, "
+            "sentiment_score=%s, key_topics=%d, action_items=%d.",
             len(full_payload),
+            analysis.sentiment_score,
+            len(analysis.key_topics),
+            len(analysis.action_items),
         )
