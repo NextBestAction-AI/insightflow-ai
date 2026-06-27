@@ -1,100 +1,10 @@
+# -*- coding: utf-8 -*-
 """
 backend/agents/base_agent.py
 ==============================
 Abstract base class for every agent in the InsightFlow AI platform.
-
-``BaseAgent`` is the execution framework that every specialised agent
-inherits from.  It owns the full agent lifecycle — timing, logging,
-validation, error handling, metrics, and ``AgentResult`` construction —
-so that child agents can focus exclusively on their business logic.
-
-Template Method Pattern
------------------------
-``run()`` is the sealed orchestrator method.  It calls a sequence of
-overridable *hook methods* in a fixed order:
-
-::
-
-    run()
-      │
-      ├─► on_start()            — observability event: agent started
-      │
-      ├─► initialize()          — agent-level setup (optional override)
-      │
-      ├─► validate_input()      — pre-execution input checks (optional override)
-      │     └─ StateValidator.check_preconditions()  (automatic)
-      │
-      ├─► before_execute()      — pre-execution side-effects (optional override)
-      │
-      ├─► execute()             — ABSTRACT: core business logic (MUST override)
-      │
-      ├─► after_execute()       — post-execution side-effects (optional override)
-      │
-      ├─► validate_output()     — result consistency checks (optional override)
-      │     └─ StateValidator.check_postconditions()  (automatic)
-      │
-      ├─► on_success()          — observability event: agent succeeded
-      │
-      └─► cleanup()             — resource teardown, always runs (optional override)
-
-      (on_failure() fires instead of on_success() when any hook raises)
-
-Child agents MUST implement :meth:`execute`.
-Child agents SHOULD NOT override :meth:`run`.
-
-Declarative Metadata
---------------------
-Every concrete agent should declare its metadata as ``ClassVar`` attributes::
-
-    class InteractionAgent(BaseAgent):
-        agent_name        = "InteractionAgent"
-        description       = "Parses customer conversations and extracts intent."
-        required_inputs   = ["input.transcript"]
-        produced_outputs  = ["analysis.interaction_analysis"]
-        supported_execution_modes = ["LIVE", "DEBUG", "DRY_RUN"]
-        priority          = 10
-
-The :meth:`get_agent_metadata` classmethod exposes all metadata as a dict
-so the **Planner** can introspect agents without instantiating them:
-
-* **Dependency ordering** — compare ``required_inputs`` against
-  ``produced_outputs`` of predecessor agents to build a DAG.
-* **Conditional routing** — skip agents whose ``required_inputs`` are not
-  satisfied by the current ``WorkflowState``.
-* **Mode filtering** — exclude agents not listed in
-  ``supported_execution_modes`` for the current :class:`ExecutionContext`.
-* **Priority scheduling** — for parallel branches, dispatch higher-priority
-  agents first.
-
-Dependency injection
---------------------
-``LLMService`` and ``PromptManager`` are injected via the constructor.
-This makes child agents trivially testable — substitute a mock at
-construction time and every lifecycle hook is covered automatically.
-
-Usage
------
-::
-
-    class MyAgent(BaseAgent):
-        agent_name = "MyAgent"
-        description = "Does something useful."
-        required_inputs = ["input.user_query"]
-        produced_outputs = ["analysis.my_output"]
-
-        async def execute(
-            self,
-            state: WorkflowState,
-            context: ExecutionContext,
-        ) -> AgentResult:
-            response = await self.llm.generate_text(raw_prompt="Hello")
-            self._record_llm_call()
-            return AgentResult.success_result(
-                agent_name=self.agent_name,
-                execution_time_ms=0.0,   # BaseAgent overwrites this
-                output_data={"text": response.text},
-            )
 """
+
 
 from __future__ import annotations
 
@@ -151,7 +61,7 @@ class AgentMetrics:
     -------------
     The ``_extra`` dict provides an open-ended extension point for
     domain-specific counters, latency breakdowns, token counts, or any
-    other metric a future agent needs to track — without modifying this
+    other metric a future agent needs to track - without modifying this
     class or ``BaseAgent``.
 
     Child agents write to it via :meth:`BaseAgent._record_metric`::
@@ -210,7 +120,7 @@ class AgentMetrics:
         key:
             Metric name (e.g. ``"tokens_used"``, ``"kb_articles_fetched"``).
         value:
-            Metric value — any JSON-serialisable type.
+            Metric value - any JSON-serialisable type.
         """
         existing = self._extra.get(key)
         if existing is not None and isinstance(existing, (int, float)) and isinstance(value, (int, float)):
@@ -258,19 +168,19 @@ class BaseAgent(ABC):
     """
     Abstract execution framework for all InsightFlow AI agents.
 
-    Every specialised agent (``InteractionAgent``, ``KnowledgeAgent``, …)
+    Every specialised agent (``InteractionAgent``, ``KnowledgeAgent``, ...)
     **must** inherit from this class.  The class encapsulates:
 
     * Structured per-agent logging.
     * Execution timing and metrics collection.
     * Lifecycle management via the Template Method Pattern.
     * Automatic :class:`~backend.orchestrator.state_validator.StateValidator`
-      integration — pre- and post-conditions are validated around ``execute``
+      integration - pre- and post-conditions are validated around ``execute``
       without any boilerplate in child agents.
     * Observability lifecycle events (``on_start``, ``on_success``,
       ``on_failure``) for future monitoring integrations.
     * Centralised error handling that never propagates raw exceptions to
-      the workflow engine — failures are captured and returned as an
+      the workflow engine - failures are captured and returned as an
       ``AgentResult`` with ``success=False``.
     * Dependency-injected access to ``LLMService`` and ``PromptManager``
       so child agents never construct their own service instances.
@@ -332,10 +242,10 @@ class BaseAgent(ABC):
       Validation errors ARE fatal and cause a failure result.
     """
 
-    # ── Required class variable — subclasses MUST override ───────────────────
+    # -- Required class variable - subclasses MUST override -------------------
     agent_name: ClassVar[str] = "BaseAgent"
 
-    # ── Optional declarative metadata — subclasses SHOULD override ───────────
+    # -- Optional declarative metadata - subclasses SHOULD override -----------
     # These are introspected by the Planner via get_agent_metadata() without
     # instantiating the agent, so they must be ClassVars, not instance attrs.
 
@@ -404,7 +314,7 @@ class BaseAgent(ABC):
                 f"'agent_name' with a unique, non-empty string."
             )
 
-        # ── Injected collaborators ───────────────────────────────────────────
+        # -- Injected collaborators -------------------------------------------
         # Prefer injected instances to support test-time mocking.
         # Fall back to factory construction for production use.
         self._llm: LLMService = llm_service or create_llm_service()
@@ -412,7 +322,7 @@ class BaseAgent(ABC):
         # StateValidator is injected so tests can supply a no-op stub.
         self._state_validator: StateValidator = state_validator or StateValidator()
 
-        # ── Per-instance logger scoped to the concrete agent name ────────────
+        # -- Per-instance logger scoped to the concrete agent name ------------
         # Using a hierarchical name keeps log configuration clean:
         # ``logging.getLogger("backend.agents")`` captures all agents at once.
         self._logger: logging.Logger = logging.getLogger(
@@ -425,7 +335,7 @@ class BaseAgent(ABC):
         self._logger.debug("%s initialised.", self.agent_name)
 
     # =========================================================================
-    # Public API — callers use only this method
+    # Public API - callers use only this method
     # =========================================================================
 
     async def run(
@@ -448,7 +358,7 @@ class BaseAgent(ABC):
         6. Constructs and returns an :class:`AgentResult`.
         7. Fires ``on_success()`` or ``on_failure()`` depending on outcome.
         8. Handles any unexpected exception, ensuring the workflow is never
-           crashed by an agent bug — it always returns an ``AgentResult``.
+           crashed by an agent bug - it always returns an ``AgentResult``.
         9. Calls ``cleanup()`` unconditionally (even after failures).
 
         Parameters
@@ -464,21 +374,21 @@ class BaseAgent(ABC):
         Returns
         -------
         AgentResult
-            Always returned — never raises.  Check ``AgentResult.success``
+            Always returned - never raises.  Check ``AgentResult.success``
             to determine whether to advance or halt the workflow.
         """
-        # ── Initialise per-run metrics ────────────────────────────────────────
+        # -- Initialise per-run metrics ----------------------------------------
         self._metrics = AgentMetrics(
             agent_name=self.agent_name,
             retry_count=context.retry_count,
         )
 
-        # ── Observability: on_start ───────────────────────────────────────────
+        # -- Observability: on_start -------------------------------------------
         # Fired before any lifecycle hook so external monitors see the event
         # even if initialize() raises.
         await self._fire_event("on_start", state, context)
 
-        # ── Structured entry log ──────────────────────────────────────────────
+        # -- Structured entry log ----------------------------------------------
         self._logger.info(
             "[%s] Started execution | request_id=%s mode=%s retry=%d/%d",
             self.agent_name,
@@ -492,36 +402,36 @@ class BaseAgent(ABC):
         exec_exception: Exception | None = None
 
         try:
-            # ── Lifecycle: initialize ─────────────────────────────────────────
+            # -- Lifecycle: initialize -----------------------------------------
             await self._run_hook("initialize", state, context)
 
-            # ── Lifecycle: validate_input ─────────────────────────────────────
+            # -- Lifecycle: validate_input -------------------------------------
             await self._run_hook("validate_input", state, context)
 
-            # ── StateValidator: pre-conditions ────────────────────────────────
+            # -- StateValidator: pre-conditions --------------------------------
             # Runs automatically so every agent gets structural checks without
             # boilerplate.  Warnings are surfaced; errors abort the run.
             await self._run_precondition_validation(state)
 
-            # ── Lifecycle: before_execute ─────────────────────────────────────
+            # -- Lifecycle: before_execute -------------------------------------
             await self._run_hook("before_execute", state, context)
 
-            # ── Lifecycle: execute (ABSTRACT) ─────────────────────────────────
+            # -- Lifecycle: execute (ABSTRACT) ---------------------------------
             self._logger.debug("[%s] Calling execute().", self.agent_name)
             raw_result: AgentResult = await self.execute(state, context)
 
-            # ── Lifecycle: after_execute ──────────────────────────────────────
+            # -- Lifecycle: after_execute --------------------------------------
             await self._run_hook("after_execute", state, context)
 
-            # ── Lifecycle: validate_output ────────────────────────────────────
+            # -- Lifecycle: validate_output ------------------------------------
             await self._run_hook("validate_output", state, context)
 
-            # ── StateValidator: post-conditions ───────────────────────────────
+            # -- StateValidator: post-conditions -------------------------------
             # Verifies the agent fulfilled its output contract.  Warnings are
             # surfaced; errors cause a failure result.
             await self._run_postcondition_validation(state)
 
-            # ── Stop timer, annotate metrics ──────────────────────────────────
+            # -- Stop timer, annotate metrics ----------------------------------
             self._metrics.stop(success=True)
             elapsed = self._metrics.elapsed_ms
 
@@ -529,7 +439,7 @@ class BaseAgent(ABC):
             # child agents never need to measure their own wall-clock time.
             result = self._enrich_result(raw_result, elapsed)
 
-            # ── Observability: on_success ─────────────────────────────────────
+            # -- Observability: on_success -------------------------------------
             await self._fire_event("on_success", state, context)
 
         except Exception as exc:  # noqa: BLE001
@@ -537,7 +447,7 @@ class BaseAgent(ABC):
             self._metrics.stop(success=False)
             elapsed = self._metrics.elapsed_ms
 
-            # ── Observability: on_failure ─────────────────────────────────────
+            # -- Observability: on_failure -------------------------------------
             await self._fire_event("on_failure", state, context)
 
             # Delegate to the overridable error handler.
@@ -560,7 +470,7 @@ class BaseAgent(ABC):
                         f"cleanup() raised: {type(cleanup_exc).__name__}: {cleanup_exc}"
                     )
 
-            # ── Structured exit log ───────────────────────────────────────────
+            # -- Structured exit log -------------------------------------------
             status_label = "SUCCESS" if (result and result.success) else "FAILURE"
             elapsed_final = self._metrics.elapsed_ms if self._metrics else 0.0
             self._logger.info(
@@ -571,13 +481,13 @@ class BaseAgent(ABC):
                 context.request_id,
             )
 
-        # result is always set at this point — either from the success
+        # result is always set at this point - either from the success
         # branch or from _handle_error_internal.
         assert result is not None, "BaseAgent.run() must always produce an AgentResult."
         return result
 
     # =========================================================================
-    # Planner introspection — classmethod, no instance required
+    # Planner introspection - classmethod, no instance required
     # =========================================================================
 
     @classmethod
@@ -586,7 +496,7 @@ class BaseAgent(ABC):
         Return the declarative metadata for this agent class.
 
         This is the **primary integration point for the Planner**.  It can
-        be called on the class itself — no instantiation required — so the
+        be called on the class itself - no instantiation required - so the
         Planner can inspect all registered agents cheaply at startup or
         plan-time:
 
@@ -598,16 +508,16 @@ class BaseAgent(ABC):
 
         Planner use-cases
         -----------------
-        * **DAG construction** — cross-reference ``required_inputs`` against
+        * **DAG construction** - cross-reference ``required_inputs`` against
           ``produced_outputs`` of other agents to derive scheduling order.
-        * **Pre-flight validation** — detect missing dependencies (no agent
+        * **Pre-flight validation** - detect missing dependencies (no agent
           produces what another requires) before any agent runs.
-        * **Mode filtering** — skip agents whose
+        * **Mode filtering** - skip agents whose
           ``supported_execution_modes`` does not include the current mode.
           An empty list means the agent supports all modes.
-        * **Priority scheduling** — within a parallel group, dispatch agents
+        * **Priority scheduling** - within a parallel group, dispatch agents
           with higher ``priority`` values first.
-        * **Documentation / operator UIs** — surface ``description`` without
+        * **Documentation / operator UIs** - surface ``description`` without
           requiring a running instance.
 
         Returns
@@ -638,7 +548,7 @@ class BaseAgent(ABC):
         }
 
     # =========================================================================
-    # Abstract method — child agents implement ONLY this
+    # Abstract method - child agents implement ONLY this
     # =========================================================================
 
     @abstractmethod
@@ -661,7 +571,7 @@ class BaseAgent(ABC):
             Shared workflow state.  Read from context / analysis sections;
             write only to the section owned by this agent.
         context:
-            Immutable runtime context (correlation IDs, execution mode, …).
+            Immutable runtime context (correlation IDs, execution mode, ...).
 
         Returns
         -------
@@ -681,7 +591,7 @@ class BaseAgent(ABC):
         ...  # pragma: no cover
 
     # =========================================================================
-    # Hook methods — override in child agents as needed
+    # Hook methods - override in child agents as needed
     # =========================================================================
 
     async def initialize(
@@ -821,7 +731,7 @@ class BaseAgent(ABC):
         return None
 
     # =========================================================================
-    # Lifecycle event hooks — override for observability integrations
+    # Lifecycle event hooks - override for observability integrations
     # =========================================================================
 
     async def on_start(
@@ -837,7 +747,7 @@ class BaseAgent(ABC):
         Separating "the agent started" from ``initialize()`` allows
         external monitoring systems (APM agents, metrics collectors,
         event buses) to receive a start signal **before** any agent code
-        runs — including code that might fail during ``initialize()``.
+        runs - including code that might fail during ``initialize()``.
 
         Override to:
         * Start a distributed trace span.
@@ -920,7 +830,7 @@ class BaseAgent(ABC):
         )
 
     # =========================================================================
-    # Protected helpers — available to child agents
+    # Protected helpers - available to child agents
     # =========================================================================
 
     @property
@@ -1002,7 +912,7 @@ class BaseAgent(ABC):
             Metric name (e.g. ``"tokens_used"``,
             ``"kb_articles_fetched"``, ``"crm_records_read"``).
         value:
-            Metric value — any JSON-serialisable type.
+            Metric value - any JSON-serialisable type.
 
         Example
         -------
@@ -1079,7 +989,7 @@ class BaseAgent(ABC):
         )
 
     # =========================================================================
-    # Private internals — not part of the child-agent API
+    # Private internals - not part of the child-agent API
     # =========================================================================
 
     async def _run_hook(
@@ -1123,7 +1033,7 @@ class BaseAgent(ABC):
         """
         Invoke a lifecycle event hook, swallowing any exception it raises.
 
-        Unlike :meth:`_run_hook`, event hooks are **non-fatal** — an
+        Unlike :meth:`_run_hook`, event hooks are **non-fatal** - an
         exception inside ``on_start``, ``on_success``, or ``on_failure``
         must never abort the primary lifecycle or alter the ``AgentResult``.
         Failures are logged at ERROR level so operators can investigate
@@ -1168,7 +1078,7 @@ class BaseAgent(ABC):
         * If no pre-conditions are registered for this agent's
           ``agent_name``, the check is silently skipped (non-fatal).
         * Validation **warnings** are appended to the running metrics and
-          surfaced in ``AgentResult.warnings`` — the run continues.
+          surfaced in ``AgentResult.warnings`` - the run continues.
         * Validation **errors** raise ``StateValidationError``, which
           propagates to :meth:`run`'s top-level handler and produces a
           failure ``AgentResult``.
@@ -1182,7 +1092,7 @@ class BaseAgent(ABC):
         # Surface validation warnings without aborting the run.
         for issue in report.warnings:
             self._add_warning(f"[pre-condition] {issue.code}: {issue.message}")
-        # Raise on errors — this propagates to run()'s exception handler.
+        # Raise on errors - this propagates to run()'s exception handler.
         report.raise_if_invalid()
 
     async def _run_postcondition_validation(
@@ -1294,7 +1204,7 @@ class BaseAgent(ABC):
         """
         exc_type = type(exc).__name__
 
-        # ── Structured failure log ────────────────────────────────────────────
+        # -- Structured failure log --------------------------------------------
         if isinstance(exc, LLMBaseError):
             # LLM-layer errors carry provider-specific context.
             self._logger.error(
@@ -1319,7 +1229,7 @@ class BaseAgent(ABC):
                 traceback.format_exc(),
             )
 
-        # ── Delegate to child-agent error handler ─────────────────────────────
+        # -- Delegate to child-agent error handler -----------------------------
         custom_result: AgentResult | None = None
         try:
             custom_result = await self.handle_error(exc, state, context)
@@ -1336,7 +1246,7 @@ class BaseAgent(ABC):
             # Child agent provided a custom result; annotate with metrics.
             return self._enrich_result(custom_result, elapsed_ms)
 
-        # ── Build default failure AgentResult ─────────────────────────────────
+        # -- Build default failure AgentResult ---------------------------------
         primary_error = f"{exc_type}: {exc}"
         return self._build_failure_result(
             errors=[primary_error],

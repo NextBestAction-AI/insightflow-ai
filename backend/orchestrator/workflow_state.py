@@ -1,59 +1,57 @@
 """
-backend/orchestrator/workflow_state.py
-========================================
-Central shared state object for the InsightFlow AI multi-agent workflow.
+Backend workflow state for recommendation and approval workflows.
 
-Every specialised agent receives the same ``WorkflowState`` instance,
-reads only the sections it needs, writes its output into its own section,
-and returns the updated state.  Agents NEVER communicate directly.
+This module tracks the state of recommendations and approvals
+throughout their lifecycle.
 
-Architecture
-------------
-
-::
-
-    WorkflowState
-    │
-    ├── CustomerState        – customer profile & account metadata
-    ├── InputState           – raw inputs (transcript, emails, query, …)
-    ├── ContextState         – retrieved enterprise context (CRM, KB, …)
-    ├── AnalysisState        – analytical agent outputs (health, risks, …)
-    ├── RecommendationState  – post-reasoning outputs & explanations
-    ├── HumanReviewState     – human-in-the-loop approval tracking
-    ├── ExecutionState       – runtime bookkeeping (agents, timestamps, …)
-    └── MetadataState        – system metadata, tags, debug info
-
-Design notes
-------------
-- Sub-models are **not** frozen so agents can mutate their own section
-  in place; the parent ``WorkflowState`` is also mutable by design.
-- ``ExecutionState`` exposes the only stateful helper methods (agent
-  tracking); all other models are plain data containers.
-- ``WorkflowState`` delegates to ``ExecutionState`` for bookkeeping and
-  exposes a minimal surface of workflow-level helpers.
-- ``Optional`` fields default to ``None`` to model information that may
-  not yet be available at workflow creation time.
+Note: AI planning, LLM reasoning, agents, and memory are handled
+by the AI team and NOT part of the backend.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.orchestrator.workflow_status import AgentStatus, WorkflowStatus
 
 
-# ===========================================================================
-# Sub-models
-# ===========================================================================
+class RecommendationWorkflowState(BaseModel):
+    """State of a recommendation through its workflow."""
+
+    recommendation_id: int = Field(..., description="Recommendation ID")
+    customer_id: int = Field(..., description="Customer ID")
+    interaction_id: int = Field(..., description="Interaction ID")
+    status: str = Field(..., description="pending, approved, rejected, executed")
+    confidence: float = Field(..., description="Confidence score 0.0-1.0")
+    action: str = Field(..., description="Recommended action")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
 
 
-# ---------------------------------------------------------------------------
-# CustomerState
-# ---------------------------------------------------------------------------
+class ApprovalWorkflowState(BaseModel):
+    """State of an approval through its workflow."""
+
+    approval_id: int = Field(..., description="Approval ID")
+    recommendation_id: int = Field(..., description="Recommendation ID")
+    decision: str = Field(..., description="approved or rejected")
+    reviewer_id: Optional[str] = Field(None, description="Reviewer user ID")
+    comments: Optional[str] = Field(None, description="Review comments")
+    reviewed_at: datetime = Field(..., description="Review timestamp")
+
+
+class WorkflowMetrics(BaseModel):
+    """Metrics for workflow execution."""
+
+    total_recommendations: int = Field(default=0, description="Total recommendations created")
+    pending_recommendations: int = Field(default=0, description="Pending approval")
+    approved_recommendations: int = Field(default=0, description="Approved count")
+    rejected_recommendations: int = Field(default=0, description="Rejected count")
+    avg_approval_time_hours: Optional[float] = Field(None, description="Average approval time")
+    approval_rate: float = Field(default=0.0, description="Approval percentage")
 
 
 class CustomerState(BaseModel):
