@@ -274,8 +274,8 @@ class AnalysisState(BaseModel):
         topics, action items, …).
     health_assessment : dict[str, Any]
         Customer health score breakdown (usage, engagement, renewal risk).
-    identified_risks : list[dict[str, Any]]
-        Risk items surfaced by the RiskAgent (churn signals, escalations).
+    risk_assessment : dict[str, Any]
+        Risk assessment containing overall level and identified risks.
     business_reasoning : dict[str, Any]
         Higher-order synthesis produced by the ReasoningAgent.
     sentiment_score : float | None
@@ -284,6 +284,8 @@ class AnalysisState(BaseModel):
         Salient topics / themes extracted from the interaction.
     action_items : list[dict[str, Any]]
         Explicit action items extracted from the interaction.
+    recommendations : dict[str, Any]
+        Recommendation plan containing recommendations, overall priority, confidence, and summary.
     """
 
     interaction_analysis: dict[str, Any] = Field(
@@ -294,9 +296,9 @@ class AnalysisState(BaseModel):
         default_factory=dict,
         description="Customer health score breakdown.",
     )
-    identified_risks: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Risk items surfaced by the RiskAgent.",
+    risk_assessment: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Risk assessment containing overall level and identified risks.",
     )
     business_reasoning: dict[str, Any] = Field(
         default_factory=dict,
@@ -316,6 +318,10 @@ class AnalysisState(BaseModel):
         default_factory=list,
         description="Explicit action items extracted from the interaction.",
     )
+    recommendations: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Recommendation plan containing recommendations, overall priority, confidence, and summary.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -332,39 +338,17 @@ class RecommendationState(BaseModel):
 
     Attributes
     ----------
-    recommendations : list[dict[str, Any]]
-        Ordered list of recommended actions (highest-confidence first).
     explanations : list[str]
         Natural-language explanations for each recommendation.
-    confidence_scores : list[float]
-        Per-recommendation confidence scores in [0.0, 1.0].  Index-aligned
-        with ``recommendations``.
-    evidence : list[dict[str, Any]]
-        Supporting evidence items cited for each recommendation.
     next_best_actions : list[str]
         Concise, prioritised next-best-actions for the sales / CS rep.
     generated_at : datetime | None
         UTC timestamp when recommendations were finalised.
     """
 
-    recommendations: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Ordered list of recommended actions (highest-confidence first).",
-    )
     explanations: list[str] = Field(
         default_factory=list,
         description="Natural-language explanations for each recommendation.",
-    )
-    confidence_scores: list[float] = Field(
-        default_factory=list,
-        description=(
-            "Per-recommendation confidence scores [0.0, 1.0], "
-            "index-aligned with 'recommendations'."
-        ),
-    )
-    evidence: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Supporting evidence items cited for each recommendation.",
     )
     next_best_actions: list[str] = Field(
         default_factory=list,

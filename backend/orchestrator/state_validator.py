@@ -312,14 +312,14 @@ def _check_analysis_populated_for_recommendation(
 def _check_recommendations_present(
     state: WorkflowState, report: ValidationReport
 ) -> None:
-    if not state.recommendation.recommendations:
+    if not state.analysis.recommendations:
         report.add_error(
             code="MISSING_RECOMMENDATIONS",
             message=(
-                "RecommendationState.recommendations is empty. "
+                "AnalysisState.recommendations is empty. "
                 "RecommendationAgent must run before ExplanationAgent."
             ),
-            field_path="recommendation.recommendations",
+            field_path="analysis.recommendations",
         )
 
 
@@ -341,21 +341,6 @@ def _check_human_review_pending(
         )
 
 
-def _check_confidence_scores_aligned(
-    state: WorkflowState, report: ValidationReport
-) -> None:
-    rec_count = len(state.recommendation.recommendations)
-    conf_count = len(state.recommendation.confidence_scores)
-    if rec_count > 0 and conf_count > 0 and rec_count != conf_count:
-        report.add_warning(
-            code="CONFIDENCE_SCORE_MISMATCH",
-            message=(
-                f"recommendation.recommendations has {rec_count} items but "
-                f"recommendation.confidence_scores has {conf_count}. "
-                "Lists should be index-aligned."
-            ),
-            field_path="recommendation.confidence_scores",
-        )
 
 
 def _check_failed_agents_without_errors(
@@ -421,7 +406,6 @@ AGENT_POSTCONDITIONS: dict[str, list[CheckFn]] = {
     ],
     "RecommendationAgent": [
         _check_recommendations_present,
-        _check_confidence_scores_aligned,
     ],
 }
 
@@ -476,7 +460,6 @@ class StateValidator:
             _check_customer_company_present,
             _check_workflow_not_terminal,
             _check_context_populated,
-            _check_confidence_scores_aligned,
             _check_failed_agents_without_errors,
             _check_human_review_pending,
         ]
