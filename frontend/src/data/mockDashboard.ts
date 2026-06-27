@@ -148,6 +148,94 @@ export const EXECUTIVE_SUMMARY_POINTS = [
   "Recommended proactive outreach via Executive Business Review.",
 ];
 
+export const MOCK_CUSTOMERS = [
+  {
+    id: 1,
+    name: "Acme Corporation",
+    health: 89,
+    arr: "$128,000",
+    renewalDays: 14,
+    churnRisk: "Low" as const,
+    csm: "Sarah",
+    status: "At Risk",
+  },
+  {
+    id: 2,
+    name: "Globex Industries",
+    health: 72,
+    arr: "$84,500",
+    renewalDays: 45,
+    churnRisk: "Medium" as const,
+    csm: "Sarah",
+    status: "Monitoring",
+  },
+  {
+    id: 3,
+    name: "Initech LLC",
+    health: 94,
+    arr: "$210,000",
+    renewalDays: 120,
+    churnRisk: "Low" as const,
+    csm: "Mike",
+    status: "Healthy",
+  },
+  {
+    id: 4,
+    name: "Umbrella Corp",
+    health: 58,
+    arr: "$56,000",
+    renewalDays: 7,
+    churnRisk: "High" as const,
+    csm: "Sarah",
+    status: "Critical",
+  },
+];
+
+export const KNOWLEDGE_DOCUMENTS = [
+  {
+    id: 1,
+    title: "Enterprise SLA Agreement v3.2",
+    category: "Contracts",
+    lastSynced: "2 hours ago",
+    chunks: 142,
+  },
+  {
+    id: 2,
+    title: "Executive Business Review Playbook",
+    category: "Playbooks",
+    lastSynced: "5 hours ago",
+    chunks: 89,
+  },
+  {
+    id: 3,
+    title: "Churn Prevention Framework",
+    category: "Frameworks",
+    lastSynced: "1 day ago",
+    chunks: 67,
+  },
+  {
+    id: 4,
+    title: "Product Usage Analytics Guide",
+    category: "Product Docs",
+    lastSynced: "1 day ago",
+    chunks: 54,
+  },
+  {
+    id: 5,
+    title: "Support Escalation Procedures",
+    category: "Support",
+    lastSynced: "3 days ago",
+    chunks: 38,
+  },
+  {
+    id: 6,
+    title: "Renewal Negotiation Templates",
+    category: "Templates",
+    lastSynced: "4 days ago",
+    chunks: 24,
+  },
+];
+
 export const RECOMMENDATION_DATA = {
   customer: "Acme Corporation",
   action: "Schedule Executive Business Review",
