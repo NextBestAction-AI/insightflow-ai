@@ -86,34 +86,6 @@ class KnowledgeContext(BaseModel):
         default_factory=list,
         description="Structured lists of metadata for all documents used.",
     )
-    playbooks: list[str] = Field(
-        default_factory=list,
-        description="Relevant playbook summaries or excerpts.",
-    )
-    troubleshooting_guides: list[str] = Field(
-        default_factory=list,
-        description="Relevant troubleshooting steps.",
-    )
-    previous_cases: list[str] = Field(
-        default_factory=list,
-        description="Relevant historical cases and their outcomes.",
-    )
-    product_information: list[str] = Field(
-        default_factory=list,
-        description="Relevant product specifications and policies.",
-    )
-    known_limitations: list[str] = Field(
-        default_factory=list,
-        description="Known limitations or platform constraints related to the issue.",
-    )
-    best_practices: list[str] = Field(
-        default_factory=list,
-        description="Best practices recommended to avoid or mitigate the issue.",
-    )
-    citations: list[str] = Field(
-        default_factory=list,
-        description="Document titles or IDs cited in the synthesis summary.",
-    )
 
 
 class KnowledgeDocument:
@@ -545,24 +517,17 @@ Do not add any conversational text or markdown code blocks outside the JSON.
     {{
       "doc_id": "<document ID>",
       "title": "<document title>",
-      "type": "<playbook | product_doc | troubleshooting_guide | case | limitation | best_practice>"
+      "type": "<playbook | product_doc | troubleshooting_guide | case | limitation | best_practice>",
+      "score": <float relevance score>
     }}
-  ],
-  "playbooks": ["<relevant playbook summary or excerpt>", ...],
-  "troubleshooting_guides": ["<troubleshooting steps to follow>", ...],
-  "previous_cases": ["<relevant historical cases and their outcomes>", ...],
-  "product_information": ["<relevant product specifications/policies>", ...],
-  "known_limitations": ["<known limitations related to the customer issue>", ...],
-  "best_practices": ["<best practices recommended for the issue>", ...],
-  "citations": ["<doc_id or title cited in summary>", ...]
+  ]
 }}
 
 ## Knowledge groundedness safety rules:
 1. Use ONLY the provided knowledge corpus. NEVER invent or assume facts.
 2. NEVER mention playbooks, guides, limitations, or best practices that are not present in the provided corpus.
-3. If no relevant documents are provided or the corpus is empty, set confidence to 0.0, state that no internal documentation was found, and return empty lists/nulls for the sections.
-4. Each entry in "citations" must match the "doc_id" or "title" of a document in the corpus.
-5. Return STRICT JSON only.
+3. If no relevant documents are provided or the corpus is empty, set confidence to 0.0, state that no internal documentation was found, and return an empty list for relevant_documents.
+4. Return STRICT JSON only.
 """
 
 _SYSTEM_PROMPT: str = (
@@ -751,7 +716,7 @@ class KnowledgeAgent(BaseAgent):
 
         # ── Step 6: Parse LLM synthesis ──────────────────────────────────────
         knowledge_ctx = self._parse_response(
-            pipeline_response.text, bundle.documents, categorized_context
+            pipeline_response.text, bundle.documents
         )
         self._logger.info("[KnowledgeAgent] Synthesized knowledge parsed successfully.")
         self._record_metric("knowledge_confidence", knowledge_ctx.confidence)
@@ -797,7 +762,6 @@ class KnowledgeAgent(BaseAgent):
             stub = KnowledgeContext(
                 summary="[KnowledgeAgent failed to parse LLM response — raw information unavailable]",
                 confidence=0.0,
-                citations=["recovery_stub"]
             )
             try:
                 self._write_state(state, stub)
@@ -824,24 +788,18 @@ class KnowledgeAgent(BaseAgent):
         self,
         raw_text: str,
         retrieved_docs: list[RelevantDocument],
-        categorized_context: dict[str, list[str]]
     ) -> KnowledgeContext:
         """
         Parse raw text into strongly-typed KnowledgeContext, enriching it with
-        retrieved metadata and categorized context lists.
+        retrieved document metadata.
         """
         self._logger.debug("[KnowledgeAgent] Parsing response...")
         knowledge_ctx = self._parser.parse_json_as(raw_text, KnowledgeContext)
 
-        # Merge structural lists from search results
+        # Override relevant_documents from the authoritative retrieval results
+        # rather than trusting the LLM's self-reported list.
         knowledge_ctx = knowledge_ctx.model_copy(update={
             "relevant_documents": retrieved_docs,
-            "playbooks": list(dict.fromkeys(categorized_context.get("playbooks", []) + knowledge_ctx.playbooks)),
-            "troubleshooting_guides": list(dict.fromkeys(categorized_context.get("troubleshooting_guides", []) + knowledge_ctx.troubleshooting_guides)),
-            "previous_cases": list(dict.fromkeys(categorized_context.get("previous_cases", []) + knowledge_ctx.previous_cases)),
-            "product_information": list(dict.fromkeys(categorized_context.get("product_information", []) + knowledge_ctx.product_information)),
-            "known_limitations": list(dict.fromkeys(categorized_context.get("known_limitations", []) + knowledge_ctx.known_limitations)),
-            "best_practices": list(dict.fromkeys(categorized_context.get("best_practices", []) + knowledge_ctx.best_practices)),
         })
 
         return knowledge_ctx
@@ -852,19 +810,8 @@ class KnowledgeAgent(BaseAgent):
         retrieved_docs: list[RelevantDocument]
     ) -> KnowledgeContext:
         """
-        Apply groundedness constraints and sanitize citations list.
+        Apply groundedness constraints and validate summary.
         """
-        valid_citations: list[str] = []
-        doc_identifiers = {doc.doc_id for doc in retrieved_docs} | {doc.title for doc in retrieved_docs}
-
-        for citation in knowledge_ctx.citations:
-            if citation in doc_identifiers:
-                valid_citations.append(citation)
-            else:
-                self._logger.warning(
-                    "[KnowledgeAgent] Discarding invalid citation: %r", citation
-                )
-
         # Fallback summary if empty
         summary = knowledge_ctx.summary.strip()
         if not summary:
@@ -872,7 +819,6 @@ class KnowledgeAgent(BaseAgent):
             self._add_warning("LLM returned an empty summary — synthesized custom report.")
 
         return knowledge_ctx.model_copy(update={
-            "citations": valid_citations,
             "summary": summary
         })
 
@@ -884,15 +830,7 @@ class KnowledgeAgent(BaseAgent):
             doc.model_dump(mode="json") for doc in knowledge_ctx.relevant_documents
         ]
         
-        # Merge structured contents to context for reasoning/downstream agents
         state.context.knowledge_context.append({
             "summary": knowledge_ctx.summary,
             "confidence": knowledge_ctx.confidence,
-            "playbooks": knowledge_ctx.playbooks,
-            "troubleshooting_guides": knowledge_ctx.troubleshooting_guides,
-            "previous_cases": knowledge_ctx.previous_cases,
-            "product_information": knowledge_ctx.product_information,
-            "known_limitations": knowledge_ctx.known_limitations,
-            "best_practices": knowledge_ctx.best_practices,
-            "citations": knowledge_ctx.citations
         })
