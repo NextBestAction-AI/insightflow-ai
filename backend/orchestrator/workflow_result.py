@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from pydantic._internal._model_construction import ModelMetaclass
 
 from backend.orchestrator.workflow_state import WorkflowState
 
@@ -50,7 +51,20 @@ class WorkflowResultMetrics(BaseModel):
     )
 
 
-class WorkflowResult(BaseModel):
+class WorkflowResultMetaclass(ModelMetaclass):
+    """
+    Custom metaclass to allow defining a classmethod named 'success' 
+    on a Pydantic model that also has a field named 'success'.
+    """
+    def __new__(mcs, name, bases, namespace, **kwargs):
+        success_func = namespace.get("success")
+        cls = super().__new__(mcs, name, bases, namespace, **kwargs)
+        if success_func:
+            setattr(cls, "success", success_func)
+        return cls
+
+
+class WorkflowResult(BaseModel, metaclass=WorkflowResultMetaclass):
     """
     Uniform immutable response object returned by the Planner.
     """
@@ -97,7 +111,7 @@ class WorkflowResult(BaseModel):
     )
 
     @classmethod
-    def success_constructor(
+    def success(
         cls,
         execution_time_ms: float,
         completed_agents: List[str],
@@ -134,21 +148,37 @@ class WorkflowResult(BaseModel):
         warnings: Optional[List[str]] = None,
         final_state: Optional[WorkflowState] = None,
         execution_time_ms: float = 0.0,
+        completed_agents: Optional[List[str]] = None,
+        failed_agents: Optional[List[str]] = None,
+        skipped_agents: Optional[List[str]] = None,
+        execution_order: Optional[List[str]] = None,
+        retry_count: int = 0,
+        metrics: Optional[Dict[str, Any]] = None,
         execution_summary: str = "Workflow execution failed."
     ) -> WorkflowResult:
-        """Helper constructor for a failed workflow result."""
+        """Helper constructor for a failed workflow result preserving diagnostic execution data."""
+        # Prioritize values from the passed metrics dictionary if available
+        final_completed = completed_agents or (metrics.get("completed_agents") if metrics else None) or []
+        final_failed = failed_agents or (metrics.get("failed_agents") if metrics else None) or []
+        final_skipped = skipped_agents or (metrics.get("skipped_agents") if metrics else None) or []
+        final_order = execution_order or (metrics.get("execution_order") if metrics else None) or (final_completed + final_failed + final_skipped)
+        final_retries = retry_count or (metrics.get("retry_count") if metrics else 0)
+
         result_metrics = WorkflowResultMetrics(
             total_execution_time_ms=execution_time_ms,
-            agents_failed=[],
-            agents_skipped=[],
-            execution_order=[]
+            agents_executed=final_completed,
+            agents_failed=final_failed,
+            agents_skipped=final_skipped,
+            execution_order=final_order,
+            retry_count=final_retries,
+            parallel_stages_count=metrics.get("parallel_stages_count", 0) if metrics else 0
         )
         return cls(
             success=False,
             execution_time_ms=execution_time_ms,
-            completed_agents=[],
-            failed_agents=[],
-            skipped_agents=[],
+            completed_agents=final_completed,
+            failed_agents=final_failed,
+            skipped_agents=final_skipped,
             warnings=warnings or [],
             errors=errors,
             metrics=result_metrics,
@@ -191,7 +221,3 @@ class WorkflowResult(BaseModel):
             final_state=final_state,
             execution_summary=execution_summary
         )
-
-
-# Bind the success classmethod after the class is defined to prevent Pydantic field collision
-WorkflowResult.success = WorkflowResult.success_constructor

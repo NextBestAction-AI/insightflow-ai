@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowExecutor:
-    """Executes the scheduled ExecutionPlan, updating state and capturing metrics."""
+    """
+    Executes the scheduled ExecutionPlan, updating state and capturing metrics.
+
+    Execution retries are configured via `max_retries`. Note that `max_retries` specifies 
+    the number of additional retry attempts *after* the initial execution. For example, 
+    `max_retries=3` results in 1 initial attempt + 3 retries = 4 total attempts.
+    """
 
     def __init__(
         self,
@@ -109,6 +115,11 @@ class WorkflowExecutor:
                     continue
 
                 # Execution with retries
+                #
+                # Note on retry semantics: The loop condition uses `retry_count <= self._max_retries`.
+                # retry_count starts at 0 (representing the initial execution attempt), and ranges up to 
+                # self._max_retries (representing additional retry attempts after the initial execution).
+                # E.g. max_retries = 3 results in 1 initial attempt + 3 retries = 4 total attempts.
                 retry_count = 0
                 success = False
                 result: Optional[AgentResult] = None
@@ -229,5 +240,10 @@ class WorkflowExecutor:
                 warnings=warnings,
                 final_state=state,
                 execution_time_ms=total_time_ms,
+                completed_agents=completed_agents,
+                failed_agents=failed_agents,
+                skipped_agents=skipped_agents,
+                retry_count=total_retries,
+                metrics=metrics_dict,
                 execution_summary=summary
             )
