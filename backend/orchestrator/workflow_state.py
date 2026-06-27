@@ -1,303 +1,52 @@
 """
-backend/orchestrator/workflow_state.py
-========================================
-Central shared state object for the InsightFlow AI multi-agent workflow.
+Backend workflow state for recommendation and approval workflows.
 
-Every specialised agent receives the same ``WorkflowState`` instance,
-reads only the sections it needs, writes its output into its own section,
-and returns the updated state.  Agents NEVER communicate directly.
+This module tracks the state of recommendations and approvals
+throughout their lifecycle.
 
-Architecture
-------------
-
-::
-
-    WorkflowState
-    │
-    ├── CustomerState        – customer profile & account metadata
-    ├── InputState           – raw inputs (transcript, emails, query, …)
-    ├── ContextState         – retrieved enterprise context (CRM, KB, …)
-    ├── AnalysisState        – analytical agent outputs (health, risks, …)
-    ├── RecommendationState  – post-reasoning outputs & explanations
-    ├── HumanReviewState     – human-in-the-loop approval tracking
-    ├── ExecutionState       – runtime bookkeeping (agents, timestamps, …)
-    └── MetadataState        – system metadata, tags, debug info
-
-Design notes
-------------
-- Sub-models are **not** frozen so agents can mutate their own section
-  in place; the parent ``WorkflowState`` is also mutable by design.
-- ``ExecutionState`` exposes the only stateful helper methods (agent
-  tracking); all other models are plain data containers.
-- ``WorkflowState`` delegates to ``ExecutionState`` for bookkeeping and
-  exposes a minimal surface of workflow-level helpers.
-- ``Optional`` fields default to ``None`` to model information that may
-  not yet be available at workflow creation time.
+Note: AI planning, LLM reasoning, agents, and memory are handled
+by the AI team and NOT part of the backend.
 """
 
 from __future__ import annotations
-
-import uuid
-from datetime import datetime, timezone
-from typing import Any
-
+from datetime import datetime
+from typing import Optional, Any
 from pydantic import BaseModel, Field
 
-from backend.orchestrator.workflow_status import AgentStatus, WorkflowStatus
+
+class RecommendationWorkflowState(BaseModel):
+    """State of a recommendation through its workflow."""
+
+    recommendation_id: int = Field(..., description="Recommendation ID")
+    customer_id: int = Field(..., description="Customer ID")
+    interaction_id: int = Field(..., description="Interaction ID")
+    status: str = Field(..., description="pending, approved, rejected, executed")
+    confidence: float = Field(..., description="Confidence score 0.0-1.0")
+    action: str = Field(..., description="Recommended action")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
 
 
-# ===========================================================================
-# Sub-models
-# ===========================================================================
+class ApprovalWorkflowState(BaseModel):
+    """State of an approval through its workflow."""
+
+    approval_id: int = Field(..., description="Approval ID")
+    recommendation_id: int = Field(..., description="Recommendation ID")
+    decision: str = Field(..., description="approved or rejected")
+    reviewer_id: Optional[str] = Field(None, description="Reviewer user ID")
+    comments: Optional[str] = Field(None, description="Review comments")
+    reviewed_at: datetime = Field(..., description="Review timestamp")
 
 
-# ---------------------------------------------------------------------------
-# CustomerState
-# ---------------------------------------------------------------------------
+class WorkflowMetrics(BaseModel):
+    """Metrics for workflow execution."""
 
-
-class CustomerState(BaseModel):
-    """
-    Customer profile information passed into the workflow.
-
-    This section is populated once at workflow creation (typically from
-    CRM data or the inbound API request) and treated as effectively
-    immutable by downstream agents.
-
-    Attributes
-    ----------
-    customer_id : str | None
-        Primary key from the CRM system.
-    customer_name : str | None
-        Display name of the customer contact.
-    company : str | None
-        Legal entity / organisation name.
-    industry : str | None
-        Industry vertical (e.g. ``"Financial Services"``).
-    account_type : str | None
-        Account tier (e.g. ``"Enterprise"``, ``"SMB"``).
-    region : str | None
-        Geographic region (e.g. ``"EMEA"``, ``"APAC"``).
-    segment : str | None
-        Commercial segment or go-to-market motion.
-    annual_revenue_usd : float | None
-        Customer's reported annual revenue in USD.
-    employee_count : int | None
-        Approximate headcount.
-    extra : dict[str, Any]
-        Extensible bag for future CRM attributes without breaking the model.
-    """
-
-    customer_id: str | None = Field(
-        default=None,
-        description="Primary key from the CRM system.",
-    )
-    customer_name: str | None = Field(
-        default=None,
-        description="Display name of the customer contact.",
-    )
-    company: str | None = Field(
-        default=None,
-        description="Legal entity / organisation name.",
-    )
-    industry: str | None = Field(
-        default=None,
-        description="Industry vertical (e.g. 'Financial Services').",
-    )
-    account_type: str | None = Field(
-        default=None,
-        description="Account tier (e.g. 'Enterprise', 'SMB', 'Startup').",
-    )
-    region: str | None = Field(
-        default=None,
-        description="Geographic region (e.g. 'EMEA', 'APAC', 'AMER').",
-    )
-    segment: str | None = Field(
-        default=None,
-        description="Commercial segment or go-to-market motion.",
-    )
-    annual_revenue_usd: float | None = Field(
-        default=None,
-        ge=0.0,
-        description="Customer's reported annual revenue in USD.",
-    )
-    employee_count: int | None = Field(
-        default=None,
-        ge=0,
-        description="Approximate employee headcount.",
-    )
-    extra: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Extensible bag for future CRM attributes.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# InputState
-# ---------------------------------------------------------------------------
-
-
-class InputState(BaseModel):
-    """
-    Raw inputs received by the platform for this workflow run.
-
-    Populated at workflow creation; treated as read-only by all agents.
-    Agents work with the processed outputs in ``ContextState`` and
-    ``AnalysisState`` rather than re-parsing raw inputs.
-
-    Attributes
-    ----------
-    user_query : str | None
-        Natural-language query or instruction from the end user.
-    transcript : str | None
-        Full call / meeting transcript text.
-    emails : list[str]
-        Raw email bodies submitted for analysis.
-    meeting_notes : str | None
-        Unstructured notes from a meeting or review session.
-    attachments : list[dict[str, Any]]
-        File references or inline attachment payloads.
-    source_channel : str | None
-        Originating channel (e.g. ``"api"``, ``"slack"``, ``"email"``).
-    language : str
-        BCP-47 language tag of the primary input text (default: ``"en"``).
-    """
-
-    user_query: str | None = Field(
-        default=None,
-        description="Natural-language query or instruction from the end user.",
-    )
-    transcript: str | None = Field(
-        default=None,
-        description="Full call / meeting transcript text.",
-    )
-    emails: list[str] = Field(
-        default_factory=list,
-        description="Raw email bodies submitted for analysis.",
-    )
-    meeting_notes: str | None = Field(
-        default=None,
-        description="Unstructured notes from a meeting or review session.",
-    )
-    attachments: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="File references or inline attachment payloads.",
-    )
-    source_channel: str | None = Field(
-        default=None,
-        description="Originating channel (e.g. 'api', 'slack', 'email').",
-    )
-    language: str = Field(
-        default="en",
-        min_length=2,
-        description="BCP-47 language tag of the primary input text.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# ContextState
-# ---------------------------------------------------------------------------
-
-
-class ContextState(BaseModel):
-    """
-    Enterprise context retrieved from external systems.
-
-    Populated by the ``KnowledgeAgent`` and ``CRMAgent``.  Downstream
-    analytical agents read from this section rather than calling external
-    systems directly.
-
-    Attributes
-    ----------
-    crm_context : dict[str, Any]
-        Structured data fetched from the CRM (opportunities, contacts, …).
-    knowledge_context : list[dict[str, Any]]
-        Relevant knowledge base articles, FAQs, or product documentation.
-    historical_interactions : list[dict[str, Any]]
-        Previous interaction records for this customer.
-    usage_metrics : dict[str, Any]
-        Product usage telemetry (DAU, feature adoption, health scores, …).
-    competitive_intelligence : list[dict[str, Any]]
-        Competitive intel retrieved from internal battlecards or KB.
-    retrieval_sources : list[str]
-        Ordered list of system/document names that contributed context.
-    context_retrieved_at : datetime | None
-        UTC timestamp when context retrieval completed.
-    """
-
-    crm_context: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Structured data fetched from the CRM.",
-    )
-    knowledge_context: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Relevant knowledge base articles or product documentation.",
-    )
-    historical_interactions: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Previous interaction records for this customer.",
-    )
-    usage_metrics: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Product usage telemetry (DAU, feature adoption, health scores).",
-    )
-    competitive_intelligence: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Competitive intel from internal battlecards or KB.",
-    )
-    retrieval_sources: list[str] = Field(
-        default_factory=list,
-        description="Ordered list of system/document names that contributed context.",
-    )
-    context_retrieved_at: datetime | None = Field(
-        default=None,
-        description="UTC timestamp when context retrieval completed.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# AnalysisState
-# ---------------------------------------------------------------------------
-
-
-class AnalysisState(BaseModel):
-    """
-    Outputs generated by the analytical agents.
-
-    Written by ``InteractionAgent``, ``KnowledgeAgent``, and ``RiskAgent``.
-    ``ReasoningAgent`` reads this section to synthesise business insights.
-
-    Attributes
-    ----------
-    interaction_analysis : dict[str, Any]
-        Structured analysis of the customer interaction (sentiment,
-        topics, action items, …).
-    health_assessment : dict[str, Any]
-        Customer health score breakdown (usage, engagement, renewal risk).
-    identified_risks : list[dict[str, Any]]
-        Risk items surfaced by the RiskAgent (churn signals, escalations).
-    business_reasoning : dict[str, Any]
-        Higher-order synthesis produced by the ReasoningAgent.
-    sentiment_score : float | None
-        Aggregate sentiment score in [-1.0, 1.0]; None if not computed.
-    key_topics : list[str]
-        Salient topics / themes extracted from the interaction.
-    action_items : list[dict[str, Any]]
-        Explicit action items extracted from the interaction.
-    """
-
-    interaction_analysis: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Structured analysis of the customer interaction.",
-    )
-    health_assessment: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Customer health score breakdown.",
-    )
-    identified_risks: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Risk items surfaced by the RiskAgent.",
-    )
+    total_recommendations: int = Field(default=0, description="Total recommendations created")
+    pending_recommendations: int = Field(default=0, description="Pending approval")
+    approved_recommendations: int = Field(default=0, description="Approved count")
+    rejected_recommendations: int = Field(default=0, description="Rejected count")
+    avg_approval_time_hours: Optional[float] = Field(None, description="Average approval time")
+    approval_rate: float = Field(default=0.0, description="Approval percentage")
     business_reasoning: dict[str, Any] = Field(
         default_factory=dict,
         description="Higher-order synthesis produced by the ReasoningAgent.",

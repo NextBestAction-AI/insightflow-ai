@@ -1,53 +1,70 @@
 """
-backend/agents/base_agent.py
-==============================
-Abstract base class for every agent in the InsightFlow AI platform.
+Base agent class for integration with the AI team's agent implementations.
 
-``BaseAgent`` is the execution framework that every specialised agent
-inherits from.  It owns the full agent lifecycle — timing, logging,
-validation, error handling, metrics, and ``AgentResult`` construction —
-so that child agents can focus exclusively on their business logic.
+This module provides a foundation for agent result handling and tracking.
+The actual AI logic is implemented by the AI team and NOT here.
 
-Template Method Pattern
------------------------
-``run()`` is the sealed orchestrator method.  It calls a sequence of
-overridable *hook methods* in a fixed order:
+This backend module is responsible only for:
+- Receiving agent results
+- Persisting recommendations
+- Tracking agent execution status
+"""
 
-::
+from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import Any, Optional
+from pydantic import BaseModel
+from config.logging import get_logger
 
-    run()
-      │
-      ├─► on_start()            — observability event: agent started
-      │
-      ├─► initialize()          — agent-level setup (optional override)
-      │
-      ├─► validate_input()      — pre-execution input checks (optional override)
-      │     └─ StateValidator.check_preconditions()  (automatic)
-      │
-      ├─► before_execute()      — pre-execution side-effects (optional override)
-      │
-      ├─► execute()             — ABSTRACT: core business logic (MUST override)
-      │
-      ├─► after_execute()       — post-execution side-effects (optional override)
-      │
-      ├─► validate_output()     — result consistency checks (optional override)
-      │     └─ StateValidator.check_postconditions()  (automatic)
-      │
-      ├─► on_success()          — observability event: agent succeeded
-      │
-      └─► cleanup()             — resource teardown, always runs (optional override)
+logger = get_logger(__name__)
 
-      (on_failure() fires instead of on_success() when any hook raises)
 
-Child agents MUST implement :meth:`execute`.
-Child agents SHOULD NOT override :meth:`run`.
+class AgentResult(BaseModel):
+    """Result returned by an AI agent."""
 
-Declarative Metadata
---------------------
-Every concrete agent should declare its metadata as ``ClassVar`` attributes::
+    agent_name: str = "interaction_agent"
+    status: str = "success"  # success, error, partial
+    recommendations: list[dict[str, Any]] = []
+    confidence_scores: list[float] = []
+    reasoning: Optional[str] = None
+    error_message: Optional[str] = None
+    execution_time_ms: float = 0.0
+    timestamp: datetime = datetime.utcnow()
 
-    class InteractionAgent(BaseAgent):
-        agent_name        = "InteractionAgent"
+
+class BaseAgent(ABC):
+    """
+    Base class for agent implementations.
+
+    NOTE: Actual agent logic is implemented by the AI team.
+    This is a backend integration point ONLY.
+    """
+
+    def __init__(self, agent_name: str):
+        """Initialize the base agent."""
+        self.agent_name = agent_name
+        self.logger = get_logger(f"{__name__}.{agent_name}")
+
+    @abstractmethod
+    def execute(self, input_data: dict[str, Any]) -> AgentResult:
+        """Execute the agent (implemented by subclasses)."""
+        raise NotImplementedError
+
+    def log_execution(self, result: AgentResult) -> None:
+        """Log agent execution for audit and debugging."""
+        self.logger.info(
+            f"Agent {self.agent_name} completed with status {result.status} "
+            f"in {result.execution_time_ms}ms"
+        )
+
+        if result.error_message:
+            self.logger.warning(f"Agent error: {result.error_message}")
+
+    def persist_result(self, session: Any, customer_id: int, result: AgentResult) -> list[int]:
+        """Persist agent results to database."""
+        # This would be called by the backend to save recommendations
+        # Implementation depends on the actual agent result format
+        pass
         description       = "Parses customer conversations and extracts intent."
         required_inputs   = ["input.transcript"]
         produced_outputs  = ["analysis.interaction_analysis"]
