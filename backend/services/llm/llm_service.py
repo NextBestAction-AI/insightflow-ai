@@ -456,11 +456,14 @@ def create_llm_service(config: LLMConfig | None = None) -> LLMService:
     elif cfg.llm_model_type == LLMProvider.OPENAI:
         from backend.services.llm.openai_client import OpenAIClient
         client = OpenAIClient(config=cfg)
+    elif cfg.llm_model_type == LLMProvider.MOCK:
+        from backend.services.llm.mock_client import MockLLMClient
+        client = MockLLMClient(config=cfg)
     else:
         from backend.services.llm.exceptions import LLMConfigurationError
         raise LLMConfigurationError(
             f"Unknown LLM provider: '{cfg.llm_model_type}'. "
-            f"Set LLM_MODEL_TYPE to 'gemini' or 'openai'."
+            f"Set LLM_MODEL_TYPE to 'gemini', 'openai', or 'mock'."
         )
 
     # ── Build collaborators ─────────────────────────────────────────────────
