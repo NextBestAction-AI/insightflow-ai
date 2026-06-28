@@ -1,11 +1,10 @@
 import { motion } from "framer-motion";
 import { Brain, Sparkles } from "lucide-react";
 
-import { EXECUTIVE_SUMMARY_POINTS } from "../../data/mockDashboard";
 import { useDashboard } from "../../context/DashboardContext";
 
 function ExecutiveSummary() {
-  const { workflowStatus } = useDashboard();
+  const { workflowStatus, summaryPoints, reasoningQuote } = useDashboard();
 
   const isLive =
     workflowStatus === "analyzing" ||
@@ -36,7 +35,7 @@ function ExecutiveSummary() {
         </div>
 
         <div className="space-y-3">
-          {EXECUTIVE_SUMMARY_POINTS.map((point, idx) => (
+          {summaryPoints.map((point, idx) => (
             <motion.div
               key={idx}
               initial={{ opacity: 0, x: -10 }}
@@ -52,8 +51,7 @@ function ExecutiveSummary() {
 
         <div className="mt-4 rounded-xl bg-[#0F172A] border border-[#334155]/50 p-3">
           <p className="text-xs text-slate-400 italic leading-relaxed">
-            &ldquo;Based on cross-agent analysis of Acme Corporation, proactive executive
-            engagement is the highest-impact intervention before renewal.&rdquo;
+            &ldquo;{reasoningQuote}&rdquo;
           </p>
           <p className="mt-2 text-[10px] text-violet-400 font-medium">
             — Business Reasoning Agent

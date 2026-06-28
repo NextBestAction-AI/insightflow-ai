@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Optional, Literal
 
@@ -6,8 +6,15 @@ from typing import Optional, Literal
 class ApprovalBase(BaseModel):
     """Base approval schema with common fields."""
     recommendation_id: int = Field(..., gt=0, description="Recommendation ID")
-    decision: Literal["approved", "rejected"] = Field(..., description="Approval decision")
+    decision: Literal["approved", "rejected", "modified"] = Field(..., description="Approval decision")
     comments: Optional[str] = Field(None, max_length=1000, description="Reviewer comments")
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def normalize_decision(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.lower()
+        return v
 
 
 class ApprovalCreate(ApprovalBase):

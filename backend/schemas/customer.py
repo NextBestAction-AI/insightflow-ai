@@ -31,3 +31,9 @@ class CustomerResponse(CustomerBase):
 
     class Config:
         from_attributes = True
+
+
+class CustomerListResponse(BaseModel):
+    """Schema for customer list response."""
+    total: int = Field(..., ge=0, description="Total number of customers")
+    items: list[CustomerResponse] = Field(..., description="List of customers")

@@ -6,7 +6,7 @@ from services.customer_service import CustomerService
 from services.interaction_service import InteractionService
 from services.recommendation_service import RecommendationService
 from services.approval_service import ApprovalService
-from schemas.customer import CustomerCreate, CustomerUpdate, CustomerResponse
+from schemas.customer import CustomerCreate, CustomerUpdate, CustomerResponse, CustomerListResponse
 from schemas.interaction import InteractionCreate, InteractionUpdate, InteractionResponse, InteractionListResponse
 from schemas.recommendation import (
     RecommendationCreate,
@@ -33,7 +33,7 @@ def create_customer(customer_data: CustomerCreate, db: Session = Depends(get_db)
     return CustomerService.create_customer(db, customer_data)
 
 
-@router.get("/customers", response_model=dict)
+@router.get("/customers", response_model=CustomerListResponse)
 def list_customers(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000), db: Session = Depends(get_db)):
     """List all customers with pagination."""
     customers, total = CustomerService.get_all_customers(db, skip=skip, limit=limit)
@@ -52,7 +52,7 @@ def get_customer_by_email(email: str, db: Session = Depends(get_db)):
     return CustomerService.get_customer_by_email(db, email)
 
 
-@router.get("/customers/company/{company}", response_model=dict)
+@router.get("/customers/company/{company}", response_model=CustomerListResponse)
 def list_customers_by_company(
     company: str, skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000), db: Session = Depends(get_db)
 ):
@@ -266,6 +266,164 @@ def delete_approval(approval_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
+# AI ORCHESTRATOR ENDPOINT
+# ============================================================================
+
+from pydantic import BaseModel, Field
+
+class AnalyzeRequest(BaseModel):
+    customer_id: int = Field(..., description="The ID of the customer to analyze")
+    interaction_type: str = Field("transcript", description="Type of interaction: transcript, email, meeting_notes, user_query")
+    content: str = Field(..., description="The content of the interaction to analyze")
+
+
+@router.post("/analyze", status_code=200)
+async def analyze_interaction(request: AnalyzeRequest, db: Session = Depends(get_db)):
+    """Run the AI orchestrator to analyze customer interaction and generate recommendations."""
+    # 1. Fetch customer from DB
+    customer = CustomerService.get_customer_by_id(db, request.customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    # 2. Save the interaction in database
+    interaction_create = InteractionCreate(
+        customer_id=request.customer_id,
+        type=request.interaction_type,
+        content=request.content
+    )
+    interaction_db = InteractionService.create_interaction(db, interaction_create)
+
+    # 3. Create WorkflowState
+    from backend.orchestrator.workflow_state import WorkflowState, CustomerState, InputState
+    from backend.orchestrator.execution_context import ExecutionContext
+    from backend.orchestrator.workflow_status import ExecutionMode
+    from backend.orchestrator.planner import Planner
+    from datetime import datetime, timezone
+    
+    state = WorkflowState(
+        customer=CustomerState(
+            customer_id=str(customer.id),
+            customer_name=customer.name,
+            company=customer.company,
+            industry=customer.industry,
+            account_type=getattr(customer, "account_type", "Enterprise"),
+            region=getattr(customer, "region", "AMER"),
+            annual_revenue_usd=getattr(customer, "annual_revenue_usd", 120000.0),
+            employee_count=getattr(customer, "employee_count", 500)
+        ),
+        input=InputState(
+            transcript=request.content if request.interaction_type == "transcript" else None,
+            emails=[request.content] if request.interaction_type == "email" else [],
+            meeting_notes=request.content if request.interaction_type == "meeting_notes" else None,
+            user_query=request.content if request.interaction_type == "user_query" else None
+        )
+    )
+    
+    # Pre-populate historical interactions if empty to avoid agent warnings
+    state.context.historical_interactions = []
+    
+    context = ExecutionContext(execution_mode=ExecutionMode.LIVE)
+
+    # 4. Instantiate planner and run
+    from backend.agents.crm_agent import CRMAgent
+    from backend.agents.health_agent import HealthAgent
+    from backend.agents.interaction_agent import InteractionAgent
+    from backend.agents.knowledge_agent import KnowledgeAgent
+    from backend.agents.reasoning_agent import ReasoningAgent
+    from backend.agents.recommendation_agent import RecommendationAgent
+    from backend.agents.risk_agent import RiskAgent
+
+    agent_classes = [
+        InteractionAgent,
+        KnowledgeAgent,
+        CRMAgent,
+        HealthAgent,
+        RiskAgent,
+        ReasoningAgent,
+        RecommendationAgent,
+    ]
+    planner = Planner(agent_classes=agent_classes)
+    
+    try:
+        workflow_result = await planner.run(state, context)
+    except Exception as exc:
+        logger.exception("Orchestration runner exception: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Orchestration failure: {str(exc)}")
+
+    if not workflow_result.success:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Workflow failed: {', '.join(workflow_result.errors)}"
+        )
+
+    # 5. Extract and persist generated recommendations
+    final_state = workflow_result.final_state
+    recs_plan = final_state.analysis.recommendations or {}
+    recommendations_list = recs_plan.get("recommendations", [])
+    
+    saved_recommendations = []
+    
+    for rec in recommendations_list:
+        title = rec.get("title", "Action")
+        description = rec.get("description", "")
+        action_str = f"{title}: {description}" if description else title
+        if len(action_str) > 255:
+            action_str = action_str[:252] + "..."
+            
+        confidence = rec.get("success_probability", 0.8)
+        reason = f"Category: {rec.get('category', 'Other')}. Reasoning: {rec.get('reasoning', '')}. Evidence: {', '.join(rec.get('supporting_evidence', []))}"
+        
+        rec_create = RecommendationCreate(
+            interaction_id=interaction_db.id,
+            customer_id=request.customer_id,
+            action=action_str,
+            confidence=confidence,
+            reason=reason,
+            status="pending"
+        )
+        saved_rec = RecommendationService.create_recommendation(db, rec_create)
+        saved_recommendations.append(saved_rec)
+
+    # 6. Map agent execution logs to activities list for the UI
+    activities = []
+    agent_mapping = {
+        "InteractionAgent": ("upload", "Interaction Analyzed", "Extracted customer sentiment, urgency, and issues from the uploaded transcript."),
+        "CRMAgent": ("crm", "CRM Context Synced", "Synchronized contract terms, renewal dates, support ticket counts, and usage metrics."),
+        "KnowledgeAgent": ("knowledge", "Knowledge Base Synced", "Queried internal troubleshooting playbooks and product manuals for relevant solutions."),
+        "HealthAgent": ("health", "Customer Health Calculated", "Determined relationship health status and identified primary drivers of health trends."),
+        "RiskAgent": ("risk", "Churn Risk Identified", "Evaluated account renewal timing, contract ACV, and open support tickets for churn risks."),
+        "ReasoningAgent": ("reasoning", "Business Reasoning Synthesized", "Combined all data inputs into a unified strategic assessment of customer health."),
+        "RecommendationAgent": ("recommendation", "Recommendation Generated", "Compiled prioritised next-best-actions with strategic reasoning and evidence.")
+    }
+    
+    for idx, agent_name in enumerate(final_state.execution.completed_agents):
+        map_info = agent_mapping.get(agent_name)
+        if map_info:
+            act_type, title, desc = map_info
+            record = final_state.execution.agent_records.get(agent_name)
+            if record and record.execution_time_ms:
+                desc += f" (Time: {record.execution_time_ms:.1f}ms)"
+            activities.append({
+                "id": str(idx + 1),
+                "time": datetime.now(timezone.utc).strftime("%I:%M %p"),
+                "title": title,
+                "description": desc,
+                "type": act_type
+            })
+
+    # Return standard response matching the UI structure
+    return {
+        "status": "success",
+        "interaction_id": interaction_db.id,
+        "recommendations": saved_recommendations,
+        "activities": activities,
+        "health_assessment": final_state.analysis.health_assessment,
+        "risk_assessment": final_state.analysis.risk_assessment,
+        "business_reasoning": final_state.analysis.business_reasoning
+    }
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -274,3 +432,4 @@ def delete_approval(approval_id: int, db: Session = Depends(get_db)):
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "InsightFlow AI Backend"}
+

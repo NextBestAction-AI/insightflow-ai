@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   X,
@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 
 import type { RecommendationStatus } from "../../types/dashboard";
-import { RECOMMENDATION_DATA } from "../../data/mockDashboard";
 import { useDashboard } from "../../context/DashboardContext";
 
 interface RecommendationCardProps {
@@ -25,9 +24,14 @@ function RecommendationCard({ status: statusProp, onAction: onActionProp }: Reco
   const ctx = useDashboard();
   const status = statusProp ?? ctx.recommendationStatus;
   const onAction = onActionProp ?? ctx.handleRecommendationAction;
+  const recommendationData = ctx.activeRecommendation;
 
   const [isEditing, setIsEditing] = useState(false);
-  const [modifiedText, setModifiedText] = useState(RECOMMENDATION_DATA.action);
+  const [modifiedText, setModifiedText] = useState(recommendationData.action);
+
+  useEffect(() => {
+    setModifiedText(recommendationData.action);
+  }, [recommendationData.action]);
 
   const handleSave = () => {
     setIsEditing(false);
@@ -59,7 +63,7 @@ function RecommendationCard({ status: statusProp, onAction: onActionProp }: Reco
               HIGH PRIORITY
             </span>
             <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs text-emerald-400 font-bold">
-              {RECOMMENDATION_DATA.confidence}% CONFIDENCE
+              {recommendationData.confidence}% CONFIDENCE
             </span>
           </div>
         </div>
@@ -69,7 +73,7 @@ function RecommendationCard({ status: statusProp, onAction: onActionProp }: Reco
             Customer
           </span>
           <p className="text-sm font-semibold text-white mt-0.5">
-            {RECOMMENDATION_DATA.customer}
+            {recommendationData.customer}
           </p>
         </div>
 
@@ -78,11 +82,11 @@ function RecommendationCard({ status: statusProp, onAction: onActionProp }: Reco
             Evidence
           </span>
           <div className="mt-2 space-y-2">
-            {RECOMMENDATION_DATA.evidence.map((e, idx) => {
+            {recommendationData.evidence.map((e, idx) => {
               const Icon = evidenceIcons[e.type];
               return (
                 <div key={idx} className="flex items-start gap-2 text-xs text-slate-300">
-                  <Icon size={14} className={`mt-0.5 shrink-0 ${evidenceColors[e.type]}`} />
+                   <Icon size={14} className={`mt-0.5 shrink-0 ${evidenceColors[e.type]}`} />
                   <span>{e.text}</span>
                 </div>
               );
@@ -121,22 +125,23 @@ function RecommendationCard({ status: statusProp, onAction: onActionProp }: Reco
           ) : (
             <div className="mt-1">
               <h3 className="text-base font-extrabold text-white">
-                {status === "modified" ? modifiedText : RECOMMENDATION_DATA.action}
+                {status === "modified" ? modifiedText : recommendationData.action}
               </h3>
               <p className="text-[11px] text-slate-400 mt-2">
                 <span className="font-semibold text-slate-300">Reason: </span>
-                {RECOMMENDATION_DATA.reason}
+                {recommendationData.reason}
               </p>
               <p className="text-[11px] text-slate-400 mt-1">
                 Expected Impact:{" "}
                 <span className="text-emerald-400 font-semibold">
-                  {RECOMMENDATION_DATA.expectedImpact}
+                  {recommendationData.expectedImpact}
                 </span>
               </p>
             </div>
           )}
         </div>
       </div>
+
 
       <div>
         {status === "approved" ? (

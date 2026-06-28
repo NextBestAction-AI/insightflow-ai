@@ -9,11 +9,22 @@ Responsible for:
 - Analytics APIs
 """
 
+import os
+import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+
+# Ensure both backend root and parent directories are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
 
 from config.settings import settings
 from config.logging import setup_logging, get_logger
