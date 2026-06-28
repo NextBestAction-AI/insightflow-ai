@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     MYSQL_PORT: int = 3306
     MYSQL_DATABASE: str = "insightflow_ai"
     MYSQL_USER: str = "root"
-    MYSQL_PASSWORD: str = "bairava@123"
+    MYSQL_PASSWORD: str = "Hemanth@123"
     MYSQL_POOL_SIZE: int = 5
     MYSQL_MAX_OVERFLOW: int = 10
     MYSQL_POOL_RECYCLE: int = 3600
