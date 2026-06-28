@@ -253,117 +253,420 @@ class OpenAIClient(BaseLLMClient):
 
 
 def get_fallback_response(prompt_text: str, system_prompt: str) -> str:
-    """Generate high-quality mock responses tailored to the specific agent requesting analysis."""
+    """
+    Generate agent-specific fallback responses whose JSON structure exactly matches
+    each agent's Pydantic output model.
+
+    Detection strategy
+    ------------------
+    Each agent passes a unique, stable system-prompt string to the LLM.  We match
+    on a unique substring of that string rather than on arbitrary prompt keywords so
+    that the correct branch fires even when the user-facing prompt content changes.
+
+    Agent → detection substring → output model
+    -------------------------------------------
+    InteractionAgent  : "structured json extraction engine"  → InteractionAnalysis
+    KnowledgeAgent    : "structured json knowledge synthesis" → KnowledgeContext
+    HealthAgent       : "health scoring system"              → HealthAssessment
+    RiskAgent         : "risk scoring system"                → RiskAssessment
+    ReasoningAgent    : "business reasoning system"          → BusinessReasoning
+    RecommendationAgent: "next-best action"                  → RecommendationPlan
+    """
     import json
-    prompt_lower = (prompt_text + " " + system_prompt).lower()
-    
-    # 1. Interaction Agent
-    if "interaction" in prompt_lower or "sentiment" in prompt_lower or "urgency" in prompt_lower:
+    from datetime import datetime, timezone
+
+    combined = (system_prompt + " " + prompt_text).lower()
+
+    # ------------------------------------------------------------------
+    # 1. InteractionAgent
+    #    Model: InteractionAnalysis
+    #    Required fields: customer, participants, sentiment, sentiment_score,
+    #                     urgency, issues (list[IssueRecord]), entities, action_items,
+    #                     commitments, key_topics, summary, interaction_count,
+    #                     sources_analysed, analysed_at, confidence
+    # ------------------------------------------------------------------
+    if "extraction engine" in combined or "structured json extraction" in combined:
         return json.dumps({
+            "customer": "Acme Corporation",
+            "participants": ["Customer Contact", "Account Executive"],
             "sentiment": "negative",
+            "sentiment_score": -0.72,
             "urgency": "critical",
-            "key_issues": [
-                "Reporting dashboard timeouts exceeding 30 seconds",
-                "Contract renewal approaching in 60 days",
-                "Dissatisfaction with latency resolution timeline"
-            ],
-            "summary": "Customer Acme Corporation is highly dissatisfied with dashboard report timeouts and has flagged renewal churn risk if unresolved."
-        })
-        
-    # 2. Knowledge Agent
-    elif "knowledge" in prompt_lower or "playbook" in prompt_lower or "sla" in prompt_lower:
-        return json.dumps({
-            "matched_documents": [
-                {"title": "Enterprise SLA Agreement v3.2", "relevance": 0.95},
-                {"title": "Executive Business Review Playbook", "relevance": 0.88},
-                {"title": "Churn Prevention Framework", "relevance": 0.82}
-            ],
-            "recommended_actions": [
-                "Propose query pre-aggregation fix",
-                "Trigger executive escalation SLA response"
-            ]
-        })
-        
-    # 3. CRM Agent
-    elif "crm" in prompt_lower or "contract" in prompt_lower or "ticket" in prompt_lower:
-        return json.dumps({
-            "renewal_date": "2026-08-15",
-            "contract_acv": 120000.0,
-            "open_tickets": 3,
-            "dau_mau_ratio": 0.12,
-            "last_contact_days": 14
-        })
-        
-    # 4. Health Agent
-    elif "health" in prompt_lower or "wellness" in prompt_lower:
-        return json.dumps({
-            "score": 68,
-            "status": "monitoring",
-            "trend": "declining",
-            "drivers": [
-                "Active usage dropped due to report query latency",
-                "Support escalation volume increased (+3 open tickets)"
-            ]
-        })
-        
-    # 5. Risk Agent
-    elif "risk" in prompt_lower or "churn" in prompt_lower:
-        return json.dumps({
-            "overall_level": "medium",
-            "confidence": 0.85,
-            "risk_factors": [
-                "Dashboard performance degradation",
-                "Renewal in 60 days ($120k ACV at risk)",
-                "Active user count declined 18% in last 14 days"
-            ]
-        })
-        
-    # 6. Reasoning Agent
-    elif "reasoning" in prompt_lower or "findings" in prompt_lower:
-        return json.dumps({
-            "key_findings": [
+            "issues": [
                 {
-                    "title": "Severe Reporting Latency",
-                    "importance": "high",
-                    "reasoning": "Dashboard queries exceed 30s timeouts, blocking daily operations."
+                    "description": "Reporting dashboard queries time out after 30 seconds",
+                    "severity": "critical",
+                    "category": "performance",
+                    "status": "open"
                 },
                 {
-                    "title": "Contract Renewal Exposure",
-                    "importance": "high",
-                    "reasoning": "Renewal date approaches in 60 days with $120,000 ARR vulnerable to churn."
-                },
-                {
-                    "title": "Adoption Trend Degradation",
-                    "importance": "medium",
-                    "reasoning": "Active user engagement decreased 18% over the past two weeks."
+                    "description": "Customer unhappy with resolution timeline for latency issue",
+                    "severity": "high",
+                    "category": "support",
+                    "status": "escalated"
                 }
             ],
-            "summary": "Acme Corporation requires immediate dashboard performance optimization and a proactive executive touchpoint to secure renewal."
+            "entities": [
+                {"name": "Acme Corporation", "entity_type": "organisation", "context": None},
+                {"name": "reporting dashboard", "entity_type": "feature", "context": None}
+            ],
+            "action_items": [
+                {
+                    "description": "Deploy database read replica to reduce query latency",
+                    "owner": "engineering",
+                    "due_date": "2026-07-05",
+                    "priority": "high"
+                }
+            ],
+            "commitments": [
+                {
+                    "description": "Provide performance fix update within 48 hours",
+                    "made_by": "support_engineer",
+                    "due_date": "2026-06-30"
+                }
+            ],
+            "key_topics": [
+                "dashboard performance",
+                "contract renewal",
+                "executive escalation",
+                "latency resolution"
+            ],
+            "summary": (
+                "Acme Corporation reported critical dashboard query timeouts exceeding 30 seconds "
+                "that are blocking daily operations. The customer expressed dissatisfaction with "
+                "the current resolution timeline and raised concerns about their upcoming renewal."
+            ),
+            "interaction_count": 1,
+            "sources_analysed": ["call_transcript"],
+            "analysed_at": datetime.now(tz=timezone.utc).isoformat(),
+            "confidence": 0.0
         })
-        
-    # 7. Recommendation Agent
-    elif "recommend" in prompt_lower or "plan" in prompt_lower or "next_best_action" in prompt_lower:
+
+    # ------------------------------------------------------------------
+    # 2. KnowledgeAgent
+    #    Model: KnowledgeContext
+    #    Required fields: summary, confidence, relevant_documents (list[RelevantDocument]),
+    #                     playbooks, troubleshooting_guides, previous_cases,
+    #                     product_information, known_limitations, best_practices, citations
+    # ------------------------------------------------------------------
+    if "knowledge synthesis" in combined or "knowledge synthesis engine" in combined:
+        return json.dumps({
+            "summary": (
+                "The enterprise knowledge base contains relevant playbooks for dashboard "
+                "performance issues and executive escalation procedures. Pre-aggregated "
+                "query tables and read replicas are the documented mitigation for report timeouts."
+            ),
+            "confidence": 0.0,
+            "relevant_documents": [
+                {"doc_id": "DOC-001", "title": "Enterprise SLA Agreement v3.2",
+                 "type": "best_practice", "score": 0.95},
+                {"doc_id": "DOC-002", "title": "Executive Business Review Playbook",
+                 "type": "playbook", "score": 0.88},
+                {"doc_id": "DOC-003", "title": "Churn Prevention Framework",
+                 "type": "playbook", "score": 0.82}
+            ],
+            "playbooks": [
+                "Executive Business Review Playbook: schedule within 7 days for at-risk renewals.",
+                "Churn Prevention Framework: proactive outreach triggers when health score < 70."
+            ],
+            "troubleshooting_guides": [
+                "Dashboard query timeout: add pre-aggregated summary tables and enable read replicas."
+            ],
+            "previous_cases": [
+                "CASE-4821: Resolved similar report latency issue for GlobalTech via DB indexing — 100% renewal achieved."
+            ],
+            "product_information": [
+                "InsightFlow reporting engine supports up to 1M row queries; exceeding limits causes timeout."
+            ],
+            "known_limitations": [
+                "Real-time aggregate reports with more than 500K rows may timeout without pre-aggregation."
+            ],
+            "best_practices": [
+                "Enable read replicas for all enterprise reporting workloads.",
+                "Pre-aggregate monthly KPI tables nightly to avoid real-time query bottlenecks."
+            ],
+            "citations": [
+                "Enterprise SLA Agreement v3.2",
+                "Executive Business Review Playbook",
+                "Churn Prevention Framework"
+            ]
+        })
+
+    # ------------------------------------------------------------------
+    # 3. HealthAgent
+    #    Model: HealthAssessment
+    #    Required fields: score (int 0-100), status, trend, drivers (list[str]),
+    #                     confidence (float 0-1), summary (str, min_length=10)
+    #    Allowed status values : healthy | fair | poor | at_risk | critical
+    #    Allowed trend values  : improving | stable | declining
+    # ------------------------------------------------------------------
+    if "health scoring system" in combined:
+        return json.dumps({
+            "score": 52,
+            "status": "at_risk",
+            "trend": "declining",
+            "drivers": [
+                "Dashboard query timeouts blocking daily operations",
+                "DAU/MAU adoption ratio dropped to 0.12 (below healthy threshold of 0.35)",
+                "3 open support tickets with 1 escalated",
+                "Renewal likelihood estimated at 45% — below retention target",
+                "Negative customer sentiment score of -0.72"
+            ],
+            "confidence": 0.0,
+            "summary": (
+                "Acme Corporation is currently at risk. A critical dashboard performance issue "
+                "is reducing active engagement, eroding trust, and threatening a $120,000 ACV "
+                "renewal in 60 days. Immediate technical and commercial intervention is required."
+            )
+        })
+
+    # ------------------------------------------------------------------
+    # 4. RiskAgent
+    #    Model: RiskAssessment
+    #    Required fields: overall_level, identified_risks (list[RiskItem]), confidence, summary
+    #    RiskItem fields : category, severity, probability, impact, evidence, description
+    #    Allowed overall_level: low | medium | high | critical
+    #    Allowed category     : financial | product | support | sentiment | adoption | other
+    #    Allowed severity     : low | medium | high | critical
+    # ------------------------------------------------------------------
+    if "risk scoring system" in combined:
+        return json.dumps({
+            "overall_level": "high",
+            "identified_risks": [
+                {
+                    "category": "financial",
+                    "severity": "critical",
+                    "probability": 0.72,
+                    "impact": 0.90,
+                    "evidence": "Contract ACV $120,000 with renewal in 60 days and renewal likelihood at 45%.",
+                    "description": "High probability of contract non-renewal due to unresolved performance issues."
+                },
+                {
+                    "category": "product",
+                    "severity": "high",
+                    "probability": 0.88,
+                    "impact": 0.80,
+                    "evidence": "Dashboard queries exceeding 30-second timeout threshold.",
+                    "description": "Critical reporting performance degradation blocking customer daily operations."
+                },
+                {
+                    "category": "adoption",
+                    "severity": "high",
+                    "probability": 0.78,
+                    "impact": 0.70,
+                    "evidence": "DAU/MAU ratio declined from 0.31 to 0.12 over the past 14 days.",
+                    "description": "Accelerating drop in active user engagement correlated with performance issues."
+                },
+                {
+                    "category": "support",
+                    "severity": "medium",
+                    "probability": 0.65,
+                    "impact": 0.55,
+                    "evidence": "3 open tickets with 1 escalated; average resolution time above SLA threshold.",
+                    "description": "Support escalation risk if ticket resolution breaches agreed SLA timelines."
+                },
+                {
+                    "category": "sentiment",
+                    "severity": "high",
+                    "probability": 0.80,
+                    "impact": 0.65,
+                    "evidence": "Interaction sentiment score -0.72; customer cited frustration with timeline.",
+                    "description": "Sustained negative sentiment increases executive escalation and churn intent."
+                }
+            ],
+            "confidence": 0.0,
+            "summary": (
+                "Acme Corporation faces a high overall risk profile driven by a critical financial "
+                "exposure of $120,000 ACV at renewal risk, a severe product performance degradation, "
+                "and accelerating adoption decline. Without immediate remediation, churn probability "
+                "is estimated above 70%."
+            )
+        })
+
+    # ------------------------------------------------------------------
+    # 5. ReasoningAgent
+    #    Model: BusinessReasoning
+    #    Required fields: overall_assessment, business_context (BusinessContext),
+    #                     key_findings (list[KeyFinding]), supporting_facts (list[str]),
+    #                     confidence (float 0-1), summary (str, min_length=10)
+    #    BusinessContext fields: customer_stage, relationship_status, product_adoption, support_state
+    #    KeyFinding fields     : title, reasoning, evidence
+    #    Allowed overall_assessment: healthy | stable | at_risk | critical_escalation | review_needed
+    #    Allowed customer_stage    : onboarding | adoption | renewal | expansion | other
+    #    Allowed relationship_status: stable | at_risk | escalated | critical
+    #    Allowed product_adoption  : high | medium | low | declining
+    #    Allowed support_state     : stable | normal | high_load | escalated | critical
+    # ------------------------------------------------------------------
+    if "business reasoning system" in combined:
+        return json.dumps({
+            "overall_assessment": "at_risk",
+            "business_context": {
+                "customer_stage": "renewal",
+                "relationship_status": "at_risk",
+                "product_adoption": "declining",
+                "support_state": "escalated"
+            },
+            "key_findings": [
+                {
+                    "title": "Performance Degradation Driving Adoption Decline",
+                    "reasoning": (
+                        "The dashboard query timeouts are directly correlated with the 18% "
+                        "drop in DAU/MAU ratio. Customers experiencing product failures reduce "
+                        "usage, which the CRM reflects as a declining adoption metric."
+                    ),
+                    "evidence": (
+                        "DAU/MAU ratio dropped from 0.31 to 0.12; dashboard timeouts exceed "
+                        "30 seconds; 3 active support tickets."
+                    )
+                },
+                {
+                    "title": "Renewal Exposure Amplified by Unresolved Technical Issues",
+                    "reasoning": (
+                        "A $120,000 ACV contract renewal is approaching in 60 days while core "
+                        "product functionality is degraded. The combination of low renewal "
+                        "likelihood (45%) and negative customer sentiment (-0.72) creates a "
+                        "compounding churn risk."
+                    ),
+                    "evidence": (
+                        "Contract ACV $120,000; renewal date 2026-08-15; renewal likelihood 45%; "
+                        "sentiment score -0.72."
+                    )
+                },
+                {
+                    "title": "Support Escalation Indicates Relationship Strain",
+                    "reasoning": (
+                        "The presence of an escalated support ticket alongside critical urgency "
+                        "in the interaction analysis indicates that normal support channels have "
+                        "failed to satisfy the customer, signalling an elevated relationship risk."
+                    ),
+                    "evidence": (
+                        "1 escalated support ticket; customer urgency rated critical; "
+                        "interaction sentiment negative."
+                    )
+                }
+            ],
+            "supporting_facts": [
+                "Dashboard query timeout: exceeds 30-second SLA threshold.",
+                "Contract ACV: $120,000 with renewal due 2026-08-15.",
+                "Renewal likelihood: 45% — below 60% retention threshold.",
+                "DAU/MAU ratio: 0.12, down from 0.31 over the past 14 days.",
+                "Open support tickets: 3, with 1 escalated.",
+                "Customer sentiment score: -0.72 (critical negative)."
+            ],
+            "confidence": 0.0,
+            "summary": (
+                "Acme Corporation is currently in a high-risk renewal stage characterized by a "
+                "critical product performance failure that is driving declining product adoption and "
+                "negative customer sentiment. The combination of an approaching $120,000 renewal, "
+                "a 45% renewal likelihood, and an escalated support ticket indicates that this "
+                "account requires immediate cross-functional intervention to prevent churn."
+            )
+        })
+
+    # ------------------------------------------------------------------
+    # 6. RecommendationAgent
+    #    Model: RecommendationPlan
+    #    Required fields: recommendations (list[Recommendation]), overall_priority,
+    #                     confidence (float 0-1), summary (str, min_length=10)
+    #    Recommendation fields: title, description, priority, category, expected_impact,
+    #                           success_probability, reasoning, supporting_evidence (list[str])
+    #    Allowed overall_priority: critical | high | medium | low
+    #    Allowed priority        : critical | high | medium | low
+    #    Allowed category        : Renewal | Customer Success | Product Adoption | Support |
+    #                              Expansion | Executive Engagement | Risk Mitigation |
+    #                              Operational | Other
+    # ------------------------------------------------------------------
+    if "next-best action" in combined or "next best action" in combined or "recommendation" in combined:
         return json.dumps({
             "recommendations": [
                 {
-                    "title": "Schedule Executive Business Review",
-                    "description": "Engage Acme's leadership within 7 days to address latency and align on technical roadmap.",
-                    "category": "Outreach",
-                    "success_probability": 0.92,
-                    "reasoning": "Direct executive alignment mitigates immediate churn risk and rebuilds trust.",
-                    "supporting_evidence": ["Renewal in 60 days", "Active user engagement dropped 18%"]
+                    "title": "Schedule Emergency Executive Business Review",
+                    "description": (
+                        "Arrange an executive-level meeting with Acme Corporation's leadership "
+                        "within 5 business days. Present a formal technical remediation roadmap "
+                        "and commercial goodwill gesture (e.g., SLA credit) to stabilize the relationship."
+                    ),
+                    "priority": "critical",
+                    "category": "Executive Engagement",
+                    "expected_impact": (
+                        "Increases renewal likelihood from 45% to 75%+ by demonstrating executive "
+                        "commitment and providing a clear resolution timeline."
+                    ),
+                    "success_probability": 0.81,
+                    "reasoning": (
+                        "Direct executive alignment is the highest-leverage action to prevent churn "
+                        "when relationship_status is at_risk and renewal is within 60 days."
+                    ),
+                    "supporting_evidence": [
+                        "Renewal in 60 days with $120,000 ACV at risk.",
+                        "Renewal likelihood currently at 45%.",
+                        "Customer sentiment score -0.72 (critical negative)."
+                    ]
                 },
                 {
-                    "title": "Deploy Query Pre-Aggregation Fix",
-                    "description": "Establish pre-aggregated tables and database read replicas to resolve timeouts.",
-                    "category": "Technical",
-                    "success_probability": 0.85,
-                    "reasoning": "Resolving the core technical issue is necessary for long-term customer retention.",
-                    "supporting_evidence": ["Dashboard timeouts exceed 30 seconds"]
+                    "title": "Deploy Query Pre-Aggregation and Read Replica Fix",
+                    "description": (
+                        "Engineering to enable pre-aggregated nightly summary tables and provision "
+                        "a dedicated read replica for the Acme reporting workload within 48 hours "
+                        "to eliminate the 30-second timeout issue."
+                    ),
+                    "priority": "critical",
+                    "category": "Support",
+                    "expected_impact": (
+                        "Resolves the root cause of the performance degradation, restoring DAU/MAU "
+                        "ratio and removing the primary driver of negative sentiment."
+                    ),
+                    "success_probability": 0.87,
+                    "reasoning": (
+                        "Without resolving the core technical failure, all commercial and relationship "
+                        "interventions will be undermined. This fix directly addresses the customer's "
+                        "stated blocker."
+                    ),
+                    "supporting_evidence": [
+                        "Dashboard timeouts exceed 30 seconds for reports over 500K rows.",
+                        "DAU/MAU ratio dropped from 0.31 to 0.12 over 14 days.",
+                        "3 open support tickets related to dashboard performance."
+                    ]
+                },
+                {
+                    "title": "Initiate Proactive Renewal Negotiation",
+                    "description": (
+                        "CSM to open renewal discussion 60 days ahead of the contract end date, "
+                        "framing the conversation around resolution milestones and offering a "
+                        "multi-year incentive to secure early commitment."
+                    ),
+                    "priority": "high",
+                    "category": "Renewal",
+                    "expected_impact": (
+                        "Secures $120,000 ACV and potentially increases contract value through "
+                        "multi-year commitment with expanded tier."
+                    ),
+                    "success_probability": 0.68,
+                    "reasoning": (
+                        "Early renewal engagement reduces churn risk by giving the CSM leverage "
+                        "to tie commercial terms to the technical resolution milestones."
+                    ),
+                    "supporting_evidence": [
+                        "Contract renewal date: 2026-08-15.",
+                        "Renewal likelihood: 45%.",
+                        "ACV: $120,000."
+                    ]
                 }
-            ]
+            ],
+            "overall_priority": "critical",
+            "confidence": 0.0,
+            "summary": (
+                "Acme Corporation requires immediate critical-priority intervention across three "
+                "tracks: an emergency executive engagement to stabilize the relationship, an urgent "
+                "technical fix to resolve dashboard performance failures, and a proactive renewal "
+                "negotiation to protect the $120,000 ACV. All three actions must begin within 5 "
+                "business days to prevent churn."
+            )
         })
-        
+
+    # ------------------------------------------------------------------
+    # Generic fallback (CRM Agent or unknown callers)
+    # ------------------------------------------------------------------
     return json.dumps({
         "status": "success",
         "message": "AI agent executed successfully (fallback mode)"

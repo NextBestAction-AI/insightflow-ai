@@ -575,11 +575,11 @@ Return ONLY a single, valid JSON object with the following fields. Do not includ
 3. Do NOT calculate new health scores or risks.
 4. Prioritize the recommendations list from highest priority (e.g. Critical/High) to lowest.
 5. Every recommendation must cite at least one concrete piece of supporting evidence from the input data.
-6. Output STRICT JSON format.
+6. Output STRICT JSON only. Do not include markdown code blocks (e.g. ```json ... ```) or any surrounding conversational filler text. Your entire response must be the JSON object and nothing else.
 """
 
 _SYSTEM_PROMPT = (
-    "You are a customer relationship recommendation generator. "
+    "You are a customer relationship next-best action recommendation system. "
     "You ALWAYS respond with a single valid JSON object and nothing else. "
     "Never include explanatory prose, markdown fences, or code blocks outside the JSON."
 )
@@ -696,6 +696,7 @@ class RecommendationAgent(BaseAgent):
         self._logger.info("[RecommendationAgent] LLM Completed")
 
         # 5. Parse and Validate
+        self._logger.debug("[RecommendationAgent] Raw LLM response (len=%d): %s", len(response.text), response.text[:800])
         try:
             plan = self._parser.parse_json_as(response.text, RecommendationPlan)
             self._logger.info(

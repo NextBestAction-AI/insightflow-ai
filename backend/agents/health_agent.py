@@ -463,7 +463,7 @@ Return ONLY a single, valid JSON object with the following fields. Do not includ
 1. Ground your assessment ONLY in the provided input. Do not assume outside details.
 2. The qualitative assessment must align with the input data. For example, if there are critical triggers like ESCALATED_SUPPORT_TICKET or SEVERE_NEGATIVE_SENTIMENT, status should reflect risk, and drivers must call out these issues.
 3. Do NOT predict churn or recommend business actions (e.g. "We should contact them" or "They will churn in 30 days"). Limit the response to the health assessment itself.
-4. Output STRICT JSON format.
+4. Output STRICT JSON only. Do not include markdown code blocks (e.g. ```json ... ```) or any surrounding conversational filler text. Your entire response must be the JSON object and nothing else.
 """
 
 _SYSTEM_PROMPT = (
@@ -601,6 +601,7 @@ class HealthAgent(BaseAgent):
         self._logger.info("[HealthAgent] LLM Completed | Latency: %.2fms", llm_latency)
 
         # 6. Parse and Validate
+        self._logger.debug("[HealthAgent] Raw LLM response (len=%d): %s", len(response.text), response.text[:800])
         try:
             assessment = self._parser.parse_json_as(response.text, HealthAssessment)
             self._logger.info(
