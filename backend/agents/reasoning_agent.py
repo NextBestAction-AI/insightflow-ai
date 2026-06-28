@@ -512,7 +512,7 @@ Return ONLY a single, valid JSON object with the following fields. Do not includ
 2. Explain *why* the customer is in their current state based on these relationships (e.g., how support escalations or product limitations correlate with declining usage and low renewal likelihood).
 3. Do NOT recommend actions (e.g., do not say "We should schedule a meeting"). Only explain the situation.
 4. Do NOT calculate new scores or invent new facts. Use only the provided information.
-5. Output STRICT JSON format.
+5. Output STRICT JSON only. Do not include markdown code blocks (e.g. ```json ... ```) or any surrounding conversational filler text. Your entire response must be the JSON object and nothing else.
 """
 
 _SYSTEM_PROMPT = (
@@ -631,6 +631,7 @@ class ReasoningAgent(BaseAgent):
         self._logger.info("[ReasoningAgent] LLM Completed")
 
         # 5. Parse and Validate
+        self._logger.debug("[ReasoningAgent] Raw LLM response (len=%d): %s", len(response.text), response.text[:800])
         try:
             reasoning = self._parser.parse_json_as(response.text, BusinessReasoning)
             self._logger.info("[ReasoningAgent] Response Parsed")

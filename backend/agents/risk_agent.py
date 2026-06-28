@@ -495,7 +495,7 @@ Return ONLY a single, valid JSON object with the following fields. Do not includ
 3. Prioritize risks in the "identified_risks" list from highest severity/impact to lowest.
 4. Do NOT recommend actions (e.g. "We should run a QBR"). Limit response to risk identification and classification.
 5. Do NOT predict future business outcomes beyond the current risk assessment (e.g. do not state "They will definitely churn next week").
-6. Output STRICT JSON format.
+6. Output STRICT JSON only. Do not include markdown code blocks (e.g. ```json ... ```) or any surrounding conversational filler text. Your entire response must be the JSON object and nothing else.
 """
 
 _SYSTEM_PROMPT = (
@@ -634,6 +634,7 @@ class RiskAgent(BaseAgent):
         self._logger.info("[RiskAgent] LLM Completed | Latency: %.2fms", llm_latency)
 
         # 6. Parse and Validate
+        self._logger.debug("[RiskAgent] Raw LLM response (len=%d): %s", len(response.text), response.text[:800])
         try:
             assessment = self._parser.parse_json_as(response.text, RiskAssessment)
             self._logger.info(
