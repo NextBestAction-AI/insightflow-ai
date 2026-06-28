@@ -1,5 +1,12 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
-import { api, type Customer } from "../services/api";
+import {
+  customerApi,
+  interactionApi,
+  analysisApi,
+  recommendationApi,
+  approvalApi,
+  type Customer,
+} from "../services/api";
 
 import type {
   ActivityItem,
@@ -72,6 +79,7 @@ interface DashboardContextValue {
   showToast: (message: string, type?: ToastMessage["type"]) => void;
   dismissToast: (id: number) => void;
   user: typeof CURRENT_USER;
+  loadDemoData: () => Promise<void>;
 }
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);
@@ -86,14 +94,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [activities, setActivities] = useState<ActivityItem[]>(DEFAULT_ACTIVITIES);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<number>(1);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number>(0);
   const [activeRecommendation, setActiveRecommendation] = useState<RecommendationData>(DEFAULT_RECOMMENDATION);
   const [summaryPoints, setSummaryPoints] = useState<string[]>(DEFAULT_SUMMARY_POINTS);
   const [reasoningQuote, setReasoningQuote] = useState<string>(DEFAULT_REASONING_QUOTE);
 
   const loadCustomersAndRecommendations = useCallback(async () => {
     try {
-      const res = await api.getCustomers();
+      const res = await customerApi.getCustomers();
       setCustomers(res.items);
       
       // If there's a customer, set selected customer ID
@@ -121,6 +129,31 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const loadDemoData = useCallback(async () => {
+    try {
+      showToast("Creating demo customer Globex Corporation...", "info");
+      const defaultCustomer = await customerApi.createCustomer({
+        name: "Bob Miller",
+        email: "bob.miller@globex.com",
+        company: "Globex Corporation",
+        industry: "Technology",
+        account_type: "Mid-Market",
+        region: "AMER",
+        annual_revenue_usd: 45000.0,
+        employee_count: 120
+      });
+      
+      // Refresh customer list
+      const res = await customerApi.getCustomers();
+      setCustomers(res.items);
+      setSelectedCustomerId(defaultCustomer.id);
+      showToast("Demo customer created successfully!", "success");
+    } catch (err: any) {
+      console.error("Failed to load demo data:", err);
+      showToast(err.message || "Failed to create demo customer", "error");
+    }
+  }, [showToast]);
+
   // Text content library matching doc types
   const sampleContents: Record<string, string> = {
     "transcript": `[CS Rep]: Hello Alice, thank you for joining today's account review.
@@ -136,6 +169,11 @@ Dear Team, we are writing to express our frustration with the report generation 
 
   const startAnalysis = useCallback(
     async (fileName: string) => {
+      if (!selectedCustomerId) {
+        showToast("Please select a customer or load demo data first.", "error");
+        return;
+      }
+
       setIsAnalyzing(true);
       setActiveStep(0);
       setRecommendationStatus("pending");
@@ -168,24 +206,44 @@ Dear Team, we are writing to express our frustration with the report generation 
       }
       const content = sampleContents[selectedType] || sampleContents["transcript"];
 
+      // Start visual progress simulation (acts as visual UX helper during load)
+      let currentVisualStep = 0;
+      const progressInterval = setInterval(() => {
+        if (currentVisualStep < 7) {
+          currentVisualStep += 1;
+          setActiveStep(currentVisualStep);
+        }
+      }, 700);
+
       try {
-        // Trigger live analysis in backend FastAPI + AI Orchestrator
-        const response = await api.analyzeInteraction(selectedCustomerId, selectedType, content);
+        // 1. Create interaction record (Customer Flow Step 2)
+        try {
+          await interactionApi.createInteraction({
+            customer_id: selectedCustomerId,
+            type: selectedType,
+            content: content
+          });
+        } catch (saveErr) {
+          console.warn("Could not save interaction record separately, proceeding directly with analyze:", saveErr);
+        }
+
+        // 2. Trigger the real analysis workflow (Customer Flow Step 3)
+        const response = await analysisApi.analyzeInteraction(selectedCustomerId, selectedType, content);
+        
+        clearInterval(progressInterval);
 
         if (response.status === "success") {
-          // Play back steps step-by-step for cool UX
-          const backendActivities = response.activities || [];
-          let currentStep = 0;
-          
-          const interval = setInterval(() => {
-            currentStep += 1;
-            setActiveStep(currentStep);
-
-            if (currentStep >= backendActivities.length) {
-              clearInterval(interval);
+          // Play a quick fast-forward animation through step 8, 9, 10
+          let step = Math.max(currentVisualStep, 7);
+          const fastForwardInterval = setInterval(() => {
+            step += 1;
+            setActiveStep(step);
+            if (step >= 10) {
+              clearInterval(fastForwardInterval);
               setIsAnalyzing(false);
               setWorkflowStatus("waiting_approval");
               
+              const backendActivities = response.activities || [];
               const formattedActivities = backendActivities.map((act: any, idx: number) => ({
                 id: Number(act.id) || (startId + idx),
                 time: act.time,
@@ -195,30 +253,46 @@ Dear Team, we are writing to express our frustration with the report generation 
               }));
               setActivities(formattedActivities);
               
-              // Load generated recommendations
+              // Load generated recommendations from backend response (Single Source of Truth)
               const firstRec = response.recommendations?.[0];
-              const customerName = customers.find(c => c.id === selectedCustomerId)?.company || "Acme Corporation";
+              const customerName = customers.find(c => c.id === selectedCustomerId)?.company || "Globex Corporation";
               
               if (firstRec) {
-                // Map DB recommendation to UI
                 const actionTitle = firstRec.action.split(":")[0] || firstRec.action;
                 
+                // Parse reason and evidence lists dynamically from the backend response
+                let reasonText = firstRec.reason;
+                let evidenceList = [
+                  { text: "Meeting transcript analyzed", type: "success" as const },
+                  { text: "CRM history reviewed", type: "success" as const },
+                  { text: "Product usage metrics synced", type: "info" as const }
+                ];
+
+                if (firstRec.reason.includes("Reasoning:")) {
+                  reasonText = firstRec.reason.split("Reasoning:")[1]?.split("Evidence:")[0]?.trim() || firstRec.reason;
+                }
+                if (firstRec.reason.includes("Evidence:")) {
+                  const evString = firstRec.reason.split("Evidence:")[1]?.trim();
+                  if (evString) {
+                    evidenceList = evString.split(",").map(e => ({
+                      text: e.trim(),
+                      type: "success" as const
+                    }));
+                  }
+                }
+
                 setActiveRecommendation({
                   id: firstRec.id,
                   customer: customerName,
                   action: actionTitle,
-                  reason: firstRec.reason.split("Reasoning:")[1]?.split("Evidence:")[0]?.trim() || firstRec.reason,
+                  reason: reasonText,
                   confidence: Math.round(firstRec.confidence * 100),
                   expectedImpact: "Mitigate customer renewal risk",
-                  evidence: [
-                    { text: "Meeting transcript analyzed", type: "success" },
-                    { text: "CRM history reviewed", type: "success" },
-                    { text: "Product usage metrics synced", type: "info" }
-                  ]
+                  evidence: evidenceList
                 });
               }
 
-              // Load Metrics
+              // Load Metrics directly from backend
               setMetrics({
                 customerHealth: response.health_assessment?.score ?? 89,
                 renewalProbability: response.risk_assessment?.overall_level === "low" ? 91 : response.risk_assessment?.overall_level === "medium" ? 75 : 45,
@@ -226,7 +300,7 @@ Dear Team, we are writing to express our frustration with the report generation 
                 aiConfidence: Math.round((response.risk_assessment?.confidence ?? 0.95) * 100),
               });
 
-              // Load Executive Summary Points from reasoning findings
+              // Load Executive Summary Points from reasoning findings directly from backend
               const findings = response.business_reasoning?.key_findings || [];
               if (findings.length > 0) {
                 setSummaryPoints(findings.map((f: any) => f.reasoning || f.title));
@@ -237,9 +311,12 @@ Dear Team, we are writing to express our frustration with the report generation 
 
               showToast("AI analysis complete — recommendation ready for review", "success");
             }
-          }, 800);
+          }, 300);
+        } else {
+          throw new Error("Failed to execute AI analysis workflow.");
         }
       } catch (err: any) {
+        clearInterval(progressInterval);
         console.error("AI analysis execution failed:", err);
         setIsAnalyzing(false);
         setWorkflowStatus("idle");
@@ -279,11 +356,12 @@ Dear Team, we are writing to express our frustration with the report generation 
 
       try {
         if (action === "approve") {
-          await api.createApproval(activeRecommendation.id, "approved", "Approved via dashboard CS Command Center");
-          await api.updateRecommendation(activeRecommendation.id, { status: "approved" });
+          await approvalApi.createApproval(activeRecommendation.id, "approved", "Approved via dashboard CS Command Center");
+          await recommendationApi.updateRecommendation(activeRecommendation.id, { status: "approved" });
 
           setRecommendationStatus("approved");
           setWorkflowStatus("approved");
+          setActiveStep(12);
           setMetrics((prev) => ({
             ...prev,
             aiConfidence: Math.min(prev.aiConfidence + 1, 99),
@@ -300,11 +378,12 @@ Dear Team, we are writing to express our frustration with the report generation 
           ]);
           showToast("Recommendation approved — action synced to CRM", "success");
         } else if (action === "reject") {
-          await api.createApproval(activeRecommendation.id, "rejected", "Rejected via dashboard");
-          await api.updateRecommendation(activeRecommendation.id, { status: "rejected" });
+          await approvalApi.createApproval(activeRecommendation.id, "rejected", "Rejected via dashboard");
+          await recommendationApi.updateRecommendation(activeRecommendation.id, { status: "rejected" });
 
           setRecommendationStatus("rejected");
           setWorkflowStatus("rejected");
+          setActiveStep(12);
           setActivities((prev) => [
             {
               id: actionId,
@@ -317,7 +396,7 @@ Dear Team, we are writing to express our frustration with the report generation 
           ]);
           showToast("Recommendation rejected", "error");
         } else if (action === "save_modification") {
-          await api.updateRecommendation(activeRecommendation.id, {
+          await recommendationApi.updateRecommendation(activeRecommendation.id, {
             action: modifiedText || activeRecommendation.action,
           });
 
@@ -369,6 +448,7 @@ Dear Team, we are writing to express our frustration with the report generation 
         showToast,
         dismissToast,
         user: CURRENT_USER,
+        loadDemoData,
       }}
     >
       {children}
@@ -376,7 +456,6 @@ Dear Team, we are writing to express our frustration with the report generation 
   );
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 export function useDashboard() {
   const context = useContext(DashboardContext);
   if (!context) {
